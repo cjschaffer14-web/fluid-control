@@ -25,7 +25,7 @@ class FingerShortcuts:
     @staticmethod
     def group_for(mask):
         if mask==3:return 'two'
-        if mask.bit_count()>=3:return 'three'
+        if mask.bit_count()==3:return 'three'
         return None
 
     @staticmethod
@@ -85,20 +85,20 @@ class FingerShortcuts:
         x,y=self.position(o,group);ax,ay=self.position(self.anchor,group)
         dx,dy=x-ax,y-ay
         vertical=o.palm_height_fraction or o.palm_fraction
-        travel=(max(.018,min(.065,vertical*.42)) if group=='two' else max(.045,min(.13,o.palm_fraction*1.5)))*scale
+        travel=(max(.009,min(.065,vertical*.42)) if group=='two' else max(.020,min(.13,o.palm_fraction*1.5)))*scale
         distance=abs(dy) if group=='two' else abs(dx)
         self.progress=min(1.,distance/max(travel,1e-6))
         elapsed=o.t-self.anchor.t
         if elapsed>1.0:
             self.anchor=o;self.progress=0.;return None
         if group=='two':
-            if .06<=elapsed<=.85 and abs(dy)>=travel and abs(dy)>abs(dx)*1.5 and abs(dy)/max(.1,elapsed)>.075:
+            if .10<=elapsed<=.85 and abs(dy)>=travel and abs(dy)>abs(dx)*1.5 and abs(dy)/max(.1,elapsed)>max(.03,min(.075,vertical*1.3)):
                 amount=max(120,min(650,abs(dy)/max(.1,elapsed)*900))
                 return self.fire(o,dict(kind='scroll',dy=-math.copysign(amount,dy)),'two')
         else:
             if raw!='three':return None
-            self.reserved=abs(dx)>.025 and abs(dx)>abs(dy)*1.65
+            self.reserved=abs(dx)>travel*.45 and abs(dx)>abs(dy)*1.65
             minimum=.12 if o.finger_mask.bit_count()>3 else .075
-            if minimum<=elapsed<=.85 and abs(dx)>=travel and abs(dx)>abs(dy)*1.65 and abs(dx)/max(.1,elapsed)>.18:
+            if minimum<=elapsed<=.85 and abs(dx)>=travel and abs(dx)>abs(dy)*1.65 and abs(dx)/max(.1,elapsed)>max(.04,min(.15,o.palm_fraction*1.8)):
                 return self.fire(o,dict(kind='desktop',direction='right' if dx>0 else 'left'),'three')
         return None

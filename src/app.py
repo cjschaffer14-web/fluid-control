@@ -21,6 +21,8 @@ from runtime import Runtime, DATA
 from runtime import profile_save
 from attempts import Attempt
 from version import VERSION, UPDATED
+from awareness import tracking_state
+from halo import TrackingHalo
 
 try:
     PERMISSIONS = ctypes.CDLL(None)
@@ -68,6 +70,8 @@ class AppDelegate(A.NSObject):
             self.click_audio.enabled=bool(prefs.get('click_audio',True))
         except (OSError,ValueError,TypeError):pass
         self.rt.output.click_feedback=lambda: self.performSelectorOnMainThread_withObject_waitUntilDone_('clickTap:',None,False)
+        self.halo=TrackingHalo()
+        self.halo_state={}
         self.last_image = None
         self.last_metrics = 0
         self.camera_pending = False
@@ -175,7 +179,7 @@ class AppDelegate(A.NSObject):
         self.status.setMaximumNumberOfLines_(2)
         self.help = self.label('One finger: quick. Open hand: precise. Pinch: click. Fist: rest. Esc: pause.', ((24,640),(650,24)), 12)
         self.voice_label = self.label('Voice off · ⌥Space to speak one command', ((24,666),(650,24)), 12, A.NSColor.secondaryLabelColor())
-        self.button('Live demo', ((20,704),(110,32)), 'demo:')
+        self.button('5–10 ft trial', ((20,704),(110,32)), 'distanceDemo:')
         self.button('Slower', ((135,704),(90,32)), 'slower:')
         self.button('Faster', ((228,704),(90,32)), 'faster:')
         self.button('Undo tuning', ((325,704),(120,32)), 'undo:')
@@ -201,6 +205,9 @@ class AppDelegate(A.NSObject):
         app_menu=A.NSMenu.alloc().init()
         self.item(app_menu,'About Control '+VERSION,'about:')
         self.item(app_menu,'Open live demo','demo:')
+        self.item(app_menu,'5–10 ft tilt trial','distanceDemo:')
+        self.item(app_menu,'Tracking halo on / off','halo:')
+        self.item(app_menu,'Tilt precision on / off','tilt:')
         self.item(app_menu,'Play button challenge','aim:')
         self.item(app_menu,'Try finger shortcuts','shortcutDemo:')
         self.item(app_menu,'Finger shortcuts on / off','shortcuts:')
@@ -226,6 +233,9 @@ class AppDelegate(A.NSObject):
         self.item(menu,'Control '+VERSION+' · Updated','about:')
         self.item(menu,'Show Control','show:')
         self.item(menu,'Live move / resize demo','demo:')
+        self.item(menu,'5–10 ft tilt trial','distanceDemo:')
+        self.item(menu,'Tracking halo on / off','halo:')
+        self.item(menu,'Tilt precision on / off','tilt:')
         self.item(menu,'Play button challenge','aim:')
         self.item(menu,'Start / Pause','toggle:')
         self.item(menu,'Speak one command  ⌥Space','voice:')
@@ -381,6 +391,24 @@ class AppDelegate(A.NSObject):
         self.room_view.snapshot=self.rt.room.snapshot()
         self.room_view.setNeedsDisplay_(True)
         self.room_window.makeKeyAndOrderFront_(None)
+
+    def halo_(self,sender):
+        self.halo.enabled=not self.halo.enabled
+        if not self.halo.enabled:self.halo.close()
+
+    def tilt_(self,sender):
+        with self.rt.lock:
+            self.rt.core.profile.tilt_precision=not self.rt.core.profile.tilt_precision
+            self.rt.core.tilt.reset();profile_save(self.rt.core.profile)
+
+    def distanceDemo_(self,sender):
+        self.demo_(None)
+        self.demo_task.selectItemAtIndex_(2)
+        self.prepareAim()
+        self.distance_trial=True
+        self.demo_prompt.setStringValue_('Stand or sit 5–10 feet away. Move to travel; settle your hand, then tilt to fine-tune.')
+        self.demo_signal.setStringValue_('Green: ready. White: tracked. Amber: unclear. Red: hand lost. Pinch to hit five targets.')
+        self.demo_goal.setStringValue_('Test from your actual seat. Afterward, report distance and tilt feel in five questions.')
 
     def swipes_(self, sender):
         if self.rt.capture_stop.is_set():
@@ -539,6 +567,7 @@ class AppDelegate(A.NSObject):
         self.rt.calibrate(('pinch','side','grab')[sender.indexOfSelectedItem()])
 
     def demo_(self, sender):
+        self.distance_trial=False
         self.rt.pause(True)
         self.aim_target=None
         if self.demo:
@@ -588,6 +617,9 @@ class AppDelegate(A.NSObject):
             if task=='shortcuts':self.prepareShortcuts()
             self.rt.core.set_mode('pointer' if task=='shortcuts' else task)
             self.rt.attempt=Attempt(task,self.rt.core.profile)
+            self.rt.attempt.distance_trial=self.distance_trial
+            self.rt.attempt.write('setup',target_distance_ft=[5,10] if self.distance_trial else None,
+                                  camera_width=self.rt.metrics.get('camera_width'),camera_height=self.rt.metrics.get('camera_height'))
             self.demo_origin=self.demo.frame()
             self.demo_grab=None
             self.demo_active=True
@@ -686,6 +718,9 @@ class AppDelegate(A.NSObject):
             questions[0]=('intent','1. Which gesture needs the most work?',['Double click','Scroll down','Scroll up','Desktop left','Desktop right','None'])
             questions[2]=('gesture','3. Which hand angle felt best?',['Palm down','Palm toward camera','Back toward camera','Sideways tilt'])
             questions[3]=('feel','4. What needs changing?',['Gesture was missed','Triggered too easily','Needed too much movement','Nothing'])
+        if self.rt.attempt.distance_trial:
+            questions[0]=('intent','1. How far from the camera?',['5 feet','7–8 feet','10 feet','Other / not measured'])
+            questions[2]=('gesture','3. How did tilt control behave?',['Fine adjustment worked','Did not enter tilt mode','Moved the wrong way','Needed arm movement','Too unstable'])
         for i,(key,prompt,choices) in enumerate(questions):
             yy=90+i*70
             self.label(prompt,((24,yy),(320,26)),14)
@@ -711,10 +746,12 @@ class AppDelegate(A.NSObject):
             self.rt.core.fx.cutoff=self.rt.core.fy.cutoff=candidate.cutoff
             profile_save(candidate)
         task={'pointer':'Aim at buttons','shortcuts':'Finger shortcuts'}.get(self.rt.attempt.task,answers['intent'])
+        distance_trial=self.rt.attempt.distance_trial
         self.demo_(None)
         self.demo_task.selectItemAtIndex_(3 if task=='Finger shortcuts' else (2 if task=='Aim at buttons' else (1 if task=='Resize window' else 0)))
         if task=='Aim at buttons':
-            self.prepareAim()
+            if distance_trial:self.distanceDemo_(None)
+            else:self.prepareAim()
         elif task=='Finger shortcuts':self.prepareShortcuts()
         self.demo_prompt.setStringValue_(note+' Press Start attempt to test the change.')
 
@@ -848,7 +885,7 @@ class AppDelegate(A.NSObject):
                 self.bar.button().setTitle_('Control ●' if active else ('Control ↔' if self.rt.desktop_swipes else 'Control ◌'))
                 self.start_button.setTitle_('Pause control' if active else 'Start control')
                 self.fluid_button.setTitle_('Fluid ●' if active and self.rt.core.profile.motion_scheme=='fluid' else 'Fluid pointer')
-                self.help.setStringValue_('2-finger tap: double click. 2-finger flick: scroll. 3+ swipe: desktops.' if self.rt.core.profile.shortcuts else ('Fluid: gentle aim. Pinch: click / hold to drag. Fist: rest. Esc: pause.' if self.rt.core.profile.motion_scheme=='fluid' else 'One finger: quick. Open hand: precise. Pinch: click. Fist: rest. Esc: pause.'))
+                self.help.setStringValue_('2-finger tap: double click. 2-finger flick: scroll. 3 fingers: desktops. Open palm: point / tilt.' if self.rt.core.profile.shortcuts else ('Fluid: gentle aim. Pinch: click / hold to drag. Fist: rest. Esc: pause.' if self.rt.core.profile.motion_scheme=='fluid' else 'One finger: quick. Open hand: precise. Pinch: click. Fist: rest. Esc: pause.'))
                 self.cam_button.setTitle_('Start camera' if self.rt.capture_stop.is_set() else 'Stop camera')
                 listening = self.rt.voice_until > time.monotonic()
                 self.voice_button.setTitle_('Stop listening' if listening else 'Voice · 12 sec')
@@ -861,6 +898,11 @@ class AppDelegate(A.NSObject):
                     status = 'PREVIEW ONLY · ' + status
                 self.status.setStringValue_(status)
                 m = dict(self.rt.metrics)
+                self.halo_state=tracking_state(m,time.monotonic(),camera_on=not self.rt.capture_stop.is_set(),
+                    paused=self.rt.core.paused,ready=self.rt.core.rearmed,handoff=bool(self.rt.takeover_until),
+                    precision=self.rt.core.tilt.active,access=bool(trusted()) or self.rt.practice,
+                    resting=self.rt.core.status.startswith('Clutched'))
+                self.halo.update(self.halo_state,not self.rt.capture_stop.is_set())
                 if hasattr(self,'room_window') and self.room_window.isVisible():
                     self.room_view.snapshot=self.rt.room.snapshot();self.room_view.setNeedsDisplay_(True)
                 names=' + '.join(name for i,name in enumerate(('index','middle','ring','pinky')) if m.get('finger_mask',0)&(1<<i)) or 'no clear fingers'
@@ -870,7 +912,7 @@ class AppDelegate(A.NSObject):
                     name=action['kind'].replace('_',' ')
                     if action['kind']=='desktop':name+=' '+action['direction']
                     hint='Recognized: '+name
-                self.finger_label.setStringValue_('Seeing: '+names+' · '+hint)
+                self.finger_label.setStringValue_('Seeing: '+names+' · '+(self.rt.core.tilt.reason if active and not self.rt.takeover_until and self.rt.metrics.get('finger_mask')!=3 else hint))
                 self.finger_label.setHidden_(self.rt.capture_stop.is_set())
                 access = 'Accessibility ready' if trusted() else 'Accessibility required for desktop control'
                 swipe=(' · '+self.rt.core.figure.replace('_',' ') if active else '')+(' · Swipes ON' if self.rt.desktop_swipes else '')+(' · '+self.rt.room.active if self.rt.room.active else '')
@@ -885,7 +927,11 @@ class AppDelegate(A.NSObject):
                     report.update(finger_shortcuts=self.rt.core.profile.shortcuts,last_shortcut=self.rt.last_shortcut,
                                   mouse_handoff=bool(self.rt.takeover_until),last_takeover_source=self.rt.last_takeover_source,
                                   shortcut_hint=self.rt.shortcuts.hint(),shortcut_progress=self.rt.shortcuts.progress,
-                                  room=self.rt.room.snapshot(),click_audio=self.click_audio.enabled,voice_wake=self.rt.voice_wake)
+                                  room=self.rt.room.snapshot(),click_audio=self.click_audio.enabled,voice_wake=self.rt.voice_wake,
+                                  halo=self.halo_state,tilt_precision=self.rt.core.tilt.active,
+                                  tilt_enabled=self.rt.core.profile.tilt_precision,tilt_reason=self.rt.core.tilt.reason,
+                                  tilt_progress=self.rt.core.tilt.progress,output_enabled=self.rt.output.enabled,
+                                  events=dict(self.rt.events_count))
                     temp=DATA/'status.tmp'
                     temp.write_text(json.dumps(report))
                     temp.replace(DATA/'status.json')
@@ -906,6 +952,7 @@ class AppDelegate(A.NSObject):
 
     def applicationWillTerminate_(self, notification):
         self.timer.invalidate()
+        self.halo.close()
         for monitor in self.monitors:
             A.NSEvent.removeMonitor_(monitor)
         self.rt.close()

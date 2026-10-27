@@ -4,11 +4,23 @@
 
 An experimental macOS app that turns camera-tracked hand movement into pointer control. Built for playful, low-effort interaction and quick personal calibration.
 
-**Status: prototype, version 0.7.0.** Pointer control has been used interactively, but gesture shortcuts, distant tracking, rotated hands, and compatibility across games and popups still need live validation. This source publication does not certify those features as reliable.
+**Status: prototype, version 0.8.0.** Pointer control has been used interactively, but gesture shortcuts, distant tracking, rotated hands, and compatibility across games and popups still need live validation. This source publication does not certify those features as reliable.
 
 The native app currently appears as **Control**. Keeping that internal name and bundle identifier preserves continuity with earlier local builds; this public edition is called **Fluid Control**.
 
-## New in 0.7.0
+## Current usability status
+
+**Not reliable yet.** The user reports inability to select a feedback answer at approximately two feet. The required operating distance is 5–10 feet, and that requirement has not been demonstrated. Track [blocking issue #1](https://github.com/cjschaffer14-web/fluid-control/issues/1). See the [failure and judgment review](docs/reviews/2026-10-27-usability.md) before interpreting tests or the tracking halo as acceptance evidence.
+
+## New in 0.8.0
+
+- A non-interactive halo follows the active window: white means tracked but paused/resting/not armed, green means ready or tilt precision, amber means insufficient detail/partial hand/delay, and red means the hand is lost. It does not detect eye gaze. Toggle it from Control's menu.
+- A stationary hand can enter wrist-tilt precision after settling; small rotations provide fine adjustment, and larger hand travel returns to coarse control. This remains an unvalidated usability experiment, with entry reasons exposed in diagnostics.
+- Smaller hand crops and lower-frame search tiles target distant tracking. Gesture thresholds scale with visible hand size. These changes do not create sensor detail or prove operation at a physical distance.
+- Desktop finger chords now use exactly **three extended fingers**. An open palm remains available for pointing/tilt and saved-position waving.
+- The 5–10 ft trial records tracking losses and asks for the user's actual distance. Feedback through text is valid when the selection interface fails.
+
+## Changes introduced in 0.7.0
 
 - Scrolling measures index/middle fingertip movement, so the palm can stay still. Brief finger-shape fluctuations are tolerated and diagonal desktop sweeps need less rigid alignment.
 - Fluid mode preserves enabled desktop shortcuts. With saved room positions, use **three fingers** for desktops; a four-finger open-hand wave is reserved for position recall.
@@ -30,7 +42,7 @@ Room anchors store camera-relative hand location, relative size, handedness and 
 - Camera-based pointer with adaptive smoothing, hand-size-aware tracking and a distance search pass.
 - Finger and whole-hand control schemes, plus a Fluid pointer mode.
 - Pinch click and drag, and native window movement and resizing modes.
-- Experimental two-finger curl/reopen for double click, two-finger vertical flick for scrolling, and three-finger horizontal swipe for switching desktops.
+- Experimental two-finger curl/reopen for double click, two-finger vertical flick for scrolling, and exactly-three-finger horizontal swipe for switching desktops.
 - Guided live demos: attempt recording, five feedback questions, and profile adjustments for the next round.
 - Optional local voice commands, a native Dock icon and a macOS permission panel.
 

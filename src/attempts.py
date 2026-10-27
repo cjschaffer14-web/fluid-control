@@ -23,6 +23,9 @@ class Attempt:
         self.task, self.profile = task, replace(profile)
         self.started = time.monotonic()
         self.last_sample = -1
+        self.last_tracking=-1
+        self.tracking_frames=0;self.usable_frames=0
+        self.distance_trial=False
         self.samples = []
         self.finished = False
         self.grabs = self.releases = 0
@@ -61,6 +64,16 @@ class Attempt:
         self.samples.append(row)
         self.write('sample',**row)
 
+    def tracking(self,obs,now,metrics,precision):
+        if self.finished:return
+        self.tracking_frames+=1
+        usable=bool(obs and obs.usable() and metrics.get('age_ms',1000)<=150)
+        self.usable_frames+=usable
+        if now-self.last_tracking<.2:return
+        self.last_tracking=now
+        self.write('tracking',detected=obs is not None,usable=usable,palm_px=metrics.get('palm_px',0),
+                   age_ms=metrics.get('age_ms'),precision=precision,in_frame=bool(obs and obs.in_frame))
+
     def event(self, event):
         if self.finished:
             return
@@ -83,7 +96,7 @@ class Attempt:
         if self.task in ('pointer','shortcuts'):
             self.success=bool(reason=='completed' and self.hits>=5)
         self.write('outcome',success=self.success,reason=reason,grabs=self.grabs,releases=self.releases,
-                   best_delta_px=round(self.best_delta,1),released_delta_px=self.released_delta,hits=self.hits,misses=self.misses)
+                   best_delta_px=round(self.best_delta,1),released_delta_px=self.released_delta,tracking_frames=self.tracking_frames,usable_frames=self.usable_frames,hits=self.hits,misses=self.misses)
 
     def target(self, hit, figure, requested_angle=None):
         if self.finished: return
@@ -104,6 +117,10 @@ class Attempt:
             setattr(p,field,max(lo,min(hi,getattr(p,field)*factor)))
         gesture={'Fingertip pinch':'pinch','Thumb side tap':'side','Whole-hand grab':'grab'}.get(answers['gesture'])
         note='Movement tuning updated from your feedback.'
+        if self.distance_trial and answers['feel'] in ('Too slow','Too fast'):
+            p.sensitivity=current.sensitivity
+            p.tilt_gain=max(.3,min(2,current.tilt_gain*(1.15 if answers['feel']=='Too slow' else 1/1.15)))
+            note='Tilt precision gain updated. Retest from the same distance.'
         if self.task=='shortcuts':
             p.sensitivity=current.sensitivity
             if answers['feel'] in ('Gesture was missed','Needed too much movement'):

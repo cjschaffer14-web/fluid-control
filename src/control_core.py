@@ -3,6 +3,7 @@ from dataclasses import dataclass
 from collections import deque
 import math
 import statistics
+from precision import TiltPrecision
 
 
 def clamp(x, lo, hi):
@@ -60,11 +61,13 @@ class Observation:
     palm_height_fraction: float = 0.0
     extension_scores: tuple = ()
     hand_map: dict | None = None
+    palm_basis: tuple = ()
+    in_frame: bool = True
 
     def usable(self):
         return (all(math.isfinite(v) for v in (self.t, self.x, self.y, self.contact, self.palm_px))
                 and -.1 <= self.x <= 1.1 and -.1 <= self.y <= 1.1
-                and 0 <= self.contact <= 8 and self.palm_px >= 22)
+                and 0 <= self.contact <= 8 and self.palm_px >= 22 and self.in_frame)
 
 
 @dataclass
@@ -80,6 +83,8 @@ class Profile:
     palm_speed: float = .60
     shortcuts: bool = True
     shortcut_scale: float = 1.0
+    tilt_precision: bool = True
+    tilt_gain: float = 1.0
 
     @classmethod
     def from_dict(cls, data):
@@ -92,12 +97,14 @@ class Profile:
             if not (.03 <= a < b <= 2.0 and b - a >= .06):
                 return p
             f, h, g = float(data.get('finger_speed',1.35)), float(data.get('palm_speed',.60)),float(data.get('shortcut_scale',1))
-            if not all(math.isfinite(v) for v in (f,h,g)):
+            tilt_gain=float(data.get('tilt_gain',1))
+            if not all(math.isfinite(v) for v in (f,h,g,tilt_gain)):
                 return p
             return cls(a, b, clamp(s, .4, 2.5), clamp(c, .8, 4),
                        bool(data.get('calibrated')), data.get('gesture') if data.get('gesture') in ('side','grab') else 'pinch',
                        data.get('motion_scheme') if data.get('motion_scheme') in ('classic','fluid') else 'figures',
-                       clamp(f,.6,2.0),clamp(h,.3,1.2),bool(data.get('shortcuts',True)),clamp(g,.7,1.4))
+                       clamp(f,.6,2.0),clamp(h,.3,1.2),bool(data.get('shortcuts',True)),clamp(g,.7,1.4),
+                       bool(data.get('tilt_precision',True)),clamp(tilt_gain,.3,2))
         except (KeyError, ValueError, TypeError):
             return p
 
@@ -201,6 +208,7 @@ class Controller:
         self.fx, self.fy = OneEuro(), OneEuro()
         self.history = deque(maxlen=40)
         self.events = []
+        self.tilt=TiltPrecision()
         self.figure = self.figure_candidate = 'neutral'
         self.figure_since = None
 
@@ -216,6 +224,7 @@ class Controller:
             self.emit('up', cancelled=True)
         self.finger_down = False
         self.state = 'idle'
+        self.tilt.reset()
         self.rearmed = False
         self.open_since = self.close_since = self.release_since = None
         self.last_obs = self.previous = self.pose = self.pose_since = self.scroll_y = None
@@ -248,7 +257,7 @@ class Controller:
             return
         self.last_t = o.t
         if not o.usable():
-            self.cancel('Hand too small or unclear · use voice or move closer')
+            self.cancel('Hand detail uncertain · waiting for a clear view')
             return
         if self.last_obs and (o.t - self.last_obs.t > .15 or o.hand != self.last_obs.hand):
             self.cancel('Tracking changed · release to continue')
@@ -275,9 +284,13 @@ class Controller:
             if o.posture != self.pose:
                 self.pose, self.pose_since = o.posture, o.t
             if o.posture == 'fist' or (self.profile.motion_scheme=='fluid' and o.posture in ('scroll_up','scroll_down')):
+                if self.profile.motion_scheme=='fluid' and o.t-self.pose_since<.16:
+                    self.status='Hand shape changing · holding pointer'
+                    return
                 self.previous = None
                 self.scroll_y = None
                 self.fx.reset(); self.fy.reset()
+                self.tilt.reset()
                 self.status = 'Clutched · relax and reposition'
                 self.close_since = None
                 return
@@ -329,9 +342,14 @@ class Controller:
             curve=.55+5.0*clamp(speed/.40,0,1)**1.5
         else:
             curve=(.85 + 3.55*clamp(speed/.45,0,1)) if self.figure!='neutral' and self.profile.motion_scheme=='figures' else (1.8+2.6*clamp(speed/.6,0,1))
-        gain = self.profile.sensitivity * factor * curve
+        distance_gain=max(1,min(2.2,.04/max(.015,o.palm_fraction))) if self.profile.motion_scheme=='fluid' else 1
+        gain = self.profile.sensitivity * factor * curve * distance_gain
         dx, dy = (fx - px) * self.bounds[2] * gain, (fy - py) * self.bounds[3] * gain
         self.previous = (fx, fy, o.t)
+        tilt=self.tilt.feed(o,enabled=self.profile.tilt_precision and self.mode=='pointer' and o.posture=='point')
+        if tilt is not None:
+            pixels=min(self.bounds[2:])*.65*self.profile.tilt_gain
+            dx,dy=tilt[0]*pixels,tilt[1]*pixels
         if self.state == 'ready' and o.contact < self.profile.contact_on:
             if self.close_since is None:
                 self.close_since = o.t
@@ -380,7 +398,8 @@ class Controller:
             self.x = clamp(self.x + dx, bx, bx+w-1)
             self.y = clamp(self.y + dy, by, by+h-1)
             self.emit('move', dragging=self.finger_down, dt=dt)
-        self.status = ('Dragging' if self.mode == 'pointer' else f'{self.mode.title()} window') if self.finger_down else f'Ready · {self.mode}'
+        self.status = ('Tilt precision · pinch to click' if self.tilt.active and not self.finger_down else 'Ready · '+self.mode)
+        if self.finger_down:self.status = ('Dragging' if self.mode == 'pointer' else f'{self.mode.title()} window') if self.finger_down else f'Ready · {self.mode}'
 
 
 COMMANDS = {

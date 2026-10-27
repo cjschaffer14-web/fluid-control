@@ -59,7 +59,7 @@ def map_hand(points, source):
     normal=normal/max(np.linalg.norm(normal),1e-8)
     along=np.cross(normal,across)
     basis=np.stack([across,along,normal],axis=1)
-    return dict(source=source,joints=((points-center)/scale).round(4).tolist(),
+    return dict(source=source,basis=basis.reshape(-1).tolist(),joints=((points-center)/scale).round(4).tolist(),
                 local_joints=(((points-center)@basis)/scale).round(4).tolist(),
                 palm_normal=normal.round(4).tolist(),
                 curls=[round(1-s,3) for s in extension_scores(points)],estimated_depth=True)

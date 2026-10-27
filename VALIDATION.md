@@ -1,6 +1,6 @@
 # Validation
 
-The source includes 137 automated tests covering controller transitions, calibration, smoothing, gesture geometry, shortcut state machines, desktop swipe gating, tracking regions, native event construction, local attempt handling and runtime safety behavior.
+The source includes 157 automated tests covering controller transitions, calibration, smoothing, gesture geometry, shortcut state machines, desktop swipe gating, tracking regions, native event construction, local attempt handling and runtime safety behavior.
 
 Run on macOS in the configured Python environment:
 
@@ -24,4 +24,10 @@ Keep personal logs local. Summarize reproducible conditions without uploading ca
 
 ## Local verification, October 27, 2026
 
-The 137-test suite passed in the existing macOS development environment. The local update launched at 30 camera frames per second with the existing Accessibility identity. A real AppKit event round trip passed single/double/right clicks, visible press duration, dragging, scrolling and release checks. The room map window rendered successfully. These checks do not substitute for the user's physical gesture and position-recall trials.
+The 157-test suite passed in the existing macOS development environment. The local update launched at 30 camera frames per second with the existing Accessibility identity. A real AppKit event round trip passed single/double/right clicks, visible press duration, dragging, scrolling and release checks. The room map window rendered successfully. These checks do not substitute for the user's physical gesture and position-recall trials.
+
+## Blocking usability result, October 27, 2026
+
+The user reports that the current control is not working reliably even at approximately two feet and cannot select an answer in the assistant's question box. The halo's appearance was received positively; usable target selection was not demonstrated. Runtime “tilt active” / “output enabled” and generated move requests do not supersede this report. No completed scored trial establishes the 5–10-foot requirement.
+
+See the [complete difficulties and judgment review](docs/reviews/2026-10-27-usability.md). Treat live usability as failed/unresolved despite passing automated checks.

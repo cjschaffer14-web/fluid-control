@@ -42,13 +42,13 @@ class FingerActions(unittest.TestCase):
         self.assertEqual(a[0]['kind'],'scroll')
     def test_three_finger_swipe_can_start_without_stationary_hold(self):
         self.assertEqual(self.flick(7,dx=.02,dy=0),[dict(kind='desktop',direction='right')])
-    def test_open_palm_sweep_no_longer_requires_stationary_hold(self):
-        self.assertEqual(self.flick(15,dx=.02,dy=0),[dict(kind='desktop',direction='right')])
+    def test_open_palm_is_reserved_for_pointing_and_tilt(self):
+        self.assertEqual(self.flick(15,dx=.02,dy=0),[])
     def test_flick_return_does_not_reverse_scroll(self):
         self.arm();self.flick()
         self.assertFalse(any(self.feed(y=.656-i*.012) for i in range(14)))
-    def test_three_and_four_finger_swipes(self):
-        for mask in (7,15):
+    def test_three_finger_swipes(self):
+        for mask in (7,11,13,14):
             self.setUp();self.arm(mask);a=self.flick(mask,dx=.02,dy=0)
             self.assertEqual(a,[dict(kind='desktop',direction='right')])
     def test_three_finger_swipe_left(self):

@@ -58,7 +58,9 @@ def extract(result, shape, t, style):
     p = np.array([(v.x*w, v.y*h) for v in lm], dtype=float)
     # Normalize distances by visible palm anatomy, not an invented centimetre estimate.
     scale = max(np.linalg.norm(p[0]-p[9]), np.linalg.norm(p[5]-p[17]), 1)
+    if len(lm)!=21 or not np.isfinite(p).all():return None
     geometry,geometry_source=hand_points(result,w,h)
+    mapped=map_hand(geometry,geometry_source)
     anatomy=max(np.linalg.norm(geometry[0]-geometry[9]),np.linalg.norm(geometry[5]-geometry[17]),1e-6)
     pinch = np.linalg.norm(geometry[4]-geometry[8]) / anatomy
     side = min(segment_distance(geometry[4], geometry[5], geometry[6]), segment_distance(geometry[4], geometry[6], geometry[7])) / anatomy
@@ -86,7 +88,8 @@ def extract(result, shape, t, style):
                        sum(1<<i for i,v in enumerate(ext) if v),
                        gesture_x=float(1-tips[0]/w),gesture_y=float(tips[1]/h),
                        palm_height_fraction=float(scale/h),extension_scores=tuple(scores[1:]),
-                       hand_map=map_hand(geometry,geometry_source))
+                       hand_map=mapped,palm_basis=tuple(mapped['basis']),
+                       in_frame=all(.005<v.x<.995 and .005<v.y<.995 for v in lm))
 
 
 class Runtime:
@@ -278,7 +281,8 @@ class Runtime:
             if not cap.isOpened():
                 raise RuntimeError('Camera unavailable. Allow camera access or choose another camera.')
             with self.lock:
-                self.message = 'Camera ready · check your hand, then start control'
+                self.metrics.update(camera_width=int(cap.get(cv2.CAP_PROP_FRAME_WIDTH)),camera_height=int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT)))
+                self.message = 'Camera ready · test from 5–10 feet'
             failures = 0
             while not token.is_set() and not self.stop.is_set():
                 ok, frame = cap.read()
@@ -362,7 +366,10 @@ class Runtime:
                                             geometry=obs.geometry if obs else 'none',contact=round(obs.contact,3) if obs else None,
                                             fingers=obs.finger_mask.bit_count() if obs else 0,
                                             finger_mask=obs.finger_mask if obs else 0,
-                                            hand_map=obs.hand_map if obs else None)
+                                            hand_map=obs.hand_map if obs else None,
+                                            in_frame=obs.in_frame if obs else False,observed_at=now)
+                        if self.attempt and not self.attempt.finished:
+                            self.attempt.tracking(obs,now,self.metrics,self.core.tilt.active)
                         if obs and self.attempt and not self.attempt.finished:
                             self.attempt.sample(obs,self.core.state)
                         self.latest_obs=obs
@@ -648,7 +655,8 @@ class Runtime:
                                    allow_desktop=(self.desktop_swipes or self.practice) and not
                                    (self.room.anchors and obs and obs.finger_mask==15 and not self.practice),
                                    allow_two=not self.core.paused)
-        reserved=allowed and self.shortcuts.reserved
+        reserved=allowed and self.shortcuts.reserved and (self.shortcuts.group!='two' or
+                    (self.shortcuts.anchor is not None and obs.t-self.shortcuts.anchor.t>=.10))
         if reserved and not self.shortcut_reserved:
             self.core.cancel('Finger shortcut · relax your fingers to resume pointing')
             self._dispatch();self.output.release()

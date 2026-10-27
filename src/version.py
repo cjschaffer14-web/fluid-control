@@ -1,3 +1,3 @@
-VERSION = '0.7.0'
-BUILD = '8'
+VERSION = '0.8.0'
+BUILD = '9'
 UPDATED = 'October 27, 2026'

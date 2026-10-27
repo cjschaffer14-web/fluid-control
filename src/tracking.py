@@ -8,7 +8,7 @@ def hand_region(result, shape):
     h,w=shape[:2]
     lm=result.hand_landmarks[0]
     xs,ys=[p.x*w for p in lm],[p.y*h for p in lm]
-    side=min(h,w,max(320,(max(xs)-min(xs))*3,(max(ys)-min(ys))*3))
+    side=min(h,w,max(160,(max(xs)-min(xs))*2.2,(max(ys)-min(ys))*2.2))
     # Large hands already occupy enough of the full detector image.
     if side>=min(h,w)*.85:
         return None
@@ -19,9 +19,13 @@ def hand_region(result, shape):
 
 def search_region(shape, step):
     h,w=shape[:2]
-    side=int(min(h,w)*.70)
-    cx=(.25,.5,.75)[step%3]*w
-    return (int(max(0,min(w-side,cx-side/2))),int((h-side)/2),side,side)
+    # Alternate a broad central pass with six smaller tiles, including a resting hand low in frame.
+    if step%7==6:
+        side=int(min(h,w)*.85);cx,cy=w/2,h/2
+    else:
+        side=int(min(h,w)*.48);cx=(.2,.5,.8)[step%3]*w
+        cy=(.28,.73)[(step//3)%2]*h
+    return (int(max(0,min(w-side,cx-side/2))),int(max(0,min(h-side,cy-side/2))),side,side)
 
 
 def restore(result, region, shape):
