@@ -13,6 +13,21 @@ class NativeOutput(unittest.TestCase):
         self.out.enabled=True
         self.out.mouse=Mock()
 
+    @patch.object(native.Q,'CGEventPost')
+    def test_tag_identifies_own_event_even_when_source_pid_is_zero(self,post):
+        e=native.Q.CGEventCreate(None)
+        self.out.post(e)
+        native.Q.CGEventSetIntegerValueField(e,native.Q.kCGEventSourceUnixProcessID,0)
+        self.assertTrue(native.is_own_event(e))
+        post.assert_called_once()
+
+    def test_untagged_pid_zero_event_still_yields_to_physical_input(self):
+        e=native.Q.CGEventCreate(None)
+        native.Q.CGEventSetIntegerValueField(e,native.Q.kCGEventSourceUnixProcessID,0)
+        native.Q.CGEventSetIntegerValueField(e,native.Q.kCGEventSourceUserData,0)
+        self.assertFalse(native.is_own_event(e))
+        self.assertFalse(native.is_own_event(None))
+
     @patch.object(native.time,'sleep')
     def test_desktop_arrow_has_mac_navigation_flags(self,sleep):
         events=[]

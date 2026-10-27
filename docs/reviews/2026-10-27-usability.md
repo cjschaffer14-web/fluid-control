@@ -107,3 +107,22 @@ Priority order is a recommendation for review, not a declaration of completion:
 - [Trial and feedback UI](../../src/app.py) and [local attempt recording](../../src/attempts.py)
 - [Room-position/wave logic](../../src/positions.py) and [click audio](../../src/feedback_audio.py)
 - [Distance/tilt tests](../../tests/test_distance_precision.py)
+
+
+## Follow-up diagnosis and recovery: 0.8.1
+
+The user reported another backwards step and asked to check the installed controller. The installed Python source matched the public 0.8.0 source. The process was alive, with camera off and pointer paused; existing logs did not establish why it stopped. Old launch errors did not establish a new crash. No completed scored hand trial was available.
+
+Two concrete behavior changes were identified against the earlier 0.5 pointer implementation:
+
+1. `Profile.tilt_precision=True`, including when the key was absent in a legacy profile, silently enabled the new mode. After approximately 0.32 seconds still, `TiltPrecision` supplied rotation deltas in place of translation. Movement below its 0.025–0.06 normalized-image exit radius could therefore be ignored. A hand that paused could feel stuck on subsequent small translations.
+2. Fluid translation gained an additional multiplier up to 2.2 based on apparent palm size. That altered the earlier response curve and could amplify aiming motion and jitter. It was not backed by a successful distant-selection trial.
+
+The recovery defaults tilt to off when absent, removes the additional translation gain, and gives Fluid pointer a concrete restore operation: cancel/release, pointer mode, tilt off, finger shortcuts off, reset gesture reservations/momentum, retain thresholds and sensitivity, preserve the first pre-recovery profile locally. Tilt remains an explicit button/menu choice. The update launcher selects this recovery operation rather than automatically enabling desktop gestures. This temporarily prioritizes basic pointing; it does not claim to repair recognition of all requested gestures.
+
+Judgment calls: retain the halo, click sound, tracking pipeline, pinch timing and existing calibration; do not retune several recognition thresholds without a recorded attempt. Keep full-hand edge gating unchanged for this recovery, although it is stricter than the earlier pointer and still needs live review. Physical mouse input continues to yield gesture control. Add a process-local event tag as a second ownership signal, but do not label PID-zero takeover messages as a proven self-trigger loop. Clear camera-off telemetry so stale frame rates cannot suggest a running camera.
+
+Validation: 165 automated checks pass. New regression cases cover stationary-then-translate behavior, legacy opt-in semantics, gain consistency, restoring during a held drag, calibration retention, local backup preservation, camera-stop telemetry and tagged PID-zero events. Explicit tilt tests still exercise rotation behavior. Native delivery and the user’s actual selection task require separate evidence; issue #1 remains open and 5–10-foot usability remains unproven.
+
+
+Local deployment evidence: the running 0.8.1 sources matched the public recovery files and used the existing approved native host. The camera ran at 30 fps with tilt/finger shortcuts off. The first native-window test was cancelled by an untagged external left click after correct single/double events; it released safely and was preserved locally. The second test completed all click/drag/scroll/release and event-tag checks. Inspection also observed `in_frame=False` with a visible large hand, causing the unchanged whole-hand gate to reject input; the physical cause and distance were not established. This remains a concrete next live-test condition, not a resolved failure. No synthetic or owned-window result is scored as a user gesture success.

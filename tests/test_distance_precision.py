@@ -24,7 +24,7 @@ def observation(t,yaw=0,pitch=0,x=.5,y=.5,palm=26):
 
 class WristPrecision(unittest.TestCase):
     def controller(self,palm=26):
-        c=Controller(profile=Profile(motion_scheme='fluid'));c.pause(False)
+        c=Controller(profile=Profile(motion_scheme='fluid',tilt_precision=True));c.pause(False)
         for i in range(30):c.feed(observation(1+i/30,palm=palm))
         self.assertTrue(c.tilt.active)
         c.drain();return c
@@ -76,11 +76,30 @@ class WristPrecision(unittest.TestCase):
         for i in range(15):self.assertIsNone(precision.feed(replace(observation(1+i/30),palm_basis=(float('nan'),)*9)))
         self.assertFalse(precision.active)
 
-    def test_enabled_profile_survives_old_and_new_saves(self):
+    def test_explicit_tilt_survives_but_legacy_profile_does_not_enable_it(self):
         p=Profile(tilt_gain=.7,tilt_precision=True)
         self.assertEqual(Profile.from_dict(asdict(p)),p)
         d=asdict(p);d.pop('tilt_gain');d.pop('tilt_precision')
-        self.assertTrue(Profile.from_dict(d).tilt_precision)
+        self.assertFalse(Profile.from_dict(d).tilt_precision)
+
+    def test_default_pointer_keeps_translation_after_settling(self):
+        c=Controller(profile=Profile(motion_scheme='fluid'));c.pause(False)
+        for i in range(30):c.feed(observation(1+i/30,palm=260))
+        self.assertFalse(c.tilt.active)
+        before=c.x
+        for i in range(1,8):c.feed(observation(2+i/30,x=.5+i*.001,palm=260))
+        self.assertGreater(c.x-before,5)
+
+    def test_translation_gain_does_not_change_with_apparent_palm_size(self):
+        amounts=[]
+        for palm in (22,40,260):
+            c=Controller(profile=Profile(motion_scheme='fluid'));c.pause(False)
+            for i in range(30):c.feed(observation(1+i/30,palm=palm))
+            before=c.x
+            for i in range(1,12):c.feed(observation(2+i/30,x=.5+i*.002,palm=palm))
+            amounts.append(c.x-before)
+        self.assertGreater(amounts[0],5)
+        self.assertAlmostEqual(amounts[0],amounts[1]);self.assertAlmostEqual(amounts[1],amounts[2])
 
 
 class DistanceDetection(unittest.TestCase):
@@ -124,6 +143,10 @@ class HaloStates(unittest.TestCase):
             self.assertEqual(tracking_state(m,10,ready=True)['color'],'amber')
     def test_camera_off_is_distinct(self):
         self.assertEqual(tracking_state(self.metrics(),10,camera_on=False)['color'],'gray')
+
+    def test_plain_pointer_label_does_not_instruct_tilt(self):
+        self.assertNotIn('tilt',tracking_state(self.metrics(),10,ready=True)['label'])
+        self.assertIn('tilt',tracking_state(self.metrics(),10,ready=True,tilt_enabled=True)['label'])
 
 
 class RangeTrial(unittest.TestCase):

@@ -4,7 +4,7 @@ from pathlib import Path
 import AppKit as A
 import Foundation as F
 import Quartz as Q
-from native import Output
+from native import Output, is_own_event, EVENT_TAG
 
 
 class ClickProbe(A.NSView):
@@ -48,8 +48,9 @@ class ClickCheck:
     def record(self,kind,event):
         p=event.locationInWindow()
         source=Q.CGEventGetIntegerValueField(event.CGEvent(),Q.kCGEventSourceUnixProcessID)
-        self.events.append(dict(kind=kind,count=event.clickCount(),timestamp=event.timestamp(),x=p.x,y=p.y,source_pid=source))
-        if source!=os.getpid() and not self.finished:
+        tagged=Q.CGEventGetIntegerValueField(event.CGEvent(),Q.kCGEventSourceUserData)==EVENT_TAG
+        self.events.append(dict(kind=kind,count=event.clickCount(),timestamp=event.timestamp(),x=p.x,y=p.y,source_pid=source,tagged=tagged))
+        if not is_own_event(event.CGEvent()) and not self.finished:
             self.finish(cancelled=True)
 
     def finish(self,cancelled=False,error=None):
@@ -66,6 +67,7 @@ class ClickCheck:
                     visible_press=len(durations)>=3 and min(durations[:3])>=.045,
                     polled_left_press=self.polled_left>=2,polled_right_press=self.polled_right>=2,
                     scroll=any(e['kind']=='scroll' and e['dy']!=0 for e in self.events),
+                    ownership_tag=bool(downs) and all(e['tagged'] for e in downs+ups+right_down+right_up),
                     release_not_stuck=not self.out.down)
         self.passed=not cancelled and not error and all(checks.values())
         report=dict(kind='native_click_check',passed=self.passed,cancelled=cancelled,error=error,

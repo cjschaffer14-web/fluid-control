@@ -3,6 +3,7 @@ import sys
 import time
 import unittest
 from unittest.mock import patch
+from tempfile import TemporaryDirectory
 
 sys.path.insert(0,str(Path(__file__).resolve().parents[1]/'src'))
 import runtime
@@ -57,6 +58,49 @@ class RuntimeSafety(unittest.TestCase):
         self.assertFalse(self.r.desktop_swipes)
         self.r.enable_swipes(True)
         self.assertFalse(self.r.desktop_swipes)
+
+    def test_restore_pointer_releases_drag_and_preserves_calibration(self):
+        with TemporaryDirectory() as folder,patch.object(runtime,'DATA',Path(folder)):
+            self.r.core.profile=Profile(contact_on=.2,contact_off=.5,sensitivity=1.32,
+                                        calibrated=True,tilt_precision=True,shortcuts=True)
+            self.r.core.finger_down=True
+            self.r.core.state='drag'
+            self.r.desktop_swipes=True
+            self.r.shortcut_reserved=True
+            self.r.scroll_remaining=200
+            self.r.restore_pointer()
+            self.assertFalse(self.r.core.finger_down)
+            self.assertEqual(self.r.events_count.get('up'),1)
+            self.assertEqual(self.r.core.profile.sensitivity,1.32)
+            self.assertEqual(self.r.core.profile.contact_on,.2)
+            self.assertTrue(self.r.core.profile.calibrated)
+            self.assertTrue(self.r.previous_profile.tilt_precision)
+            self.assertFalse(self.r.core.profile.tilt_precision)
+            self.assertFalse(self.r.core.profile.shortcuts)
+            self.assertFalse(self.r.desktop_swipes)
+            self.assertFalse(self.r.shortcut_reserved)
+            self.assertEqual(self.r.scroll_remaining,0)
+            self.r.pause(False)
+            t=time.monotonic()
+            for i in range(20):
+                self.r.process_shortcuts(Observation(t+i/30,.5,.5,.8,60,finger_mask=3),t+i/30)
+            self.assertFalse(self.r.shortcut_reserved)
+
+    def test_recovery_keeps_first_local_profile_backup(self):
+        with TemporaryDirectory() as folder,patch.object(runtime,'DATA',Path(folder)):
+            saved=Path(folder)/'profile.json';saved.write_text('original profile')
+            self.r.restore_pointer()
+            saved.write_text('later profile')
+            self.r.restore_pointer()
+            self.assertEqual((Path(folder)/'profile-before-0.8.1.json').read_text(),'original profile')
+
+    def test_camera_stop_clears_stale_telemetry(self):
+        self.r.metrics.update(fps=30,palm_px=100,camera_width=1920,observed_at=100,tracked=True)
+        self.r.stop_camera()
+        self.assertTrue(self.r.core.paused)
+        self.assertEqual(self.r.metrics['fps'],0)
+        self.assertEqual(self.r.metrics['camera_width'],0)
+        self.assertFalse(self.r.metrics['tracked'])
 
     def test_mouse_handoff_resumes_without_manual_start(self):
         with self.r.lock:

@@ -83,7 +83,7 @@ class Profile:
     palm_speed: float = .60
     shortcuts: bool = True
     shortcut_scale: float = 1.0
-    tilt_precision: bool = True
+    tilt_precision: bool = False
     tilt_gain: float = 1.0
 
     @classmethod
@@ -104,7 +104,7 @@ class Profile:
                        bool(data.get('calibrated')), data.get('gesture') if data.get('gesture') in ('side','grab') else 'pinch',
                        data.get('motion_scheme') if data.get('motion_scheme') in ('classic','fluid') else 'figures',
                        clamp(f,.6,2.0),clamp(h,.3,1.2),bool(data.get('shortcuts',True)),clamp(g,.7,1.4),
-                       bool(data.get('tilt_precision',True)),clamp(tilt_gain,.3,2))
+                       bool(data.get('tilt_precision',False)),clamp(tilt_gain,.3,2))
         except (KeyError, ValueError, TypeError):
             return p
 
@@ -342,8 +342,7 @@ class Controller:
             curve=.55+5.0*clamp(speed/.40,0,1)**1.5
         else:
             curve=(.85 + 3.55*clamp(speed/.45,0,1)) if self.figure!='neutral' and self.profile.motion_scheme=='figures' else (1.8+2.6*clamp(speed/.6,0,1))
-        distance_gain=max(1,min(2.2,.04/max(.015,o.palm_fraction))) if self.profile.motion_scheme=='fluid' else 1
-        gain = self.profile.sensitivity * factor * curve * distance_gain
+        gain = self.profile.sensitivity * factor * curve
         dx, dy = (fx - px) * self.bounds[2] * gain, (fy - py) * self.bounds[3] * gain
         self.previous = (fx, fy, o.t)
         tilt=self.tilt.feed(o,enabled=self.profile.tilt_precision and self.mode=='pointer' and o.posture=='point')

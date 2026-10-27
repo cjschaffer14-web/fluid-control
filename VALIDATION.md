@@ -1,6 +1,6 @@
 # Validation
 
-The source includes 157 automated tests covering controller transitions, calibration, smoothing, gesture geometry, shortcut state machines, desktop swipe gating, tracking regions, native event construction, local attempt handling and runtime safety behavior.
+The source includes 165 automated tests covering controller transitions, calibration, smoothing, gesture geometry, shortcut state machines, desktop swipe gating, tracking regions, native event construction, local attempt handling and runtime safety behavior.
 
 Run on macOS in the configured Python environment:
 
@@ -31,3 +31,13 @@ The 157-test suite passed in the existing macOS development environment. The loc
 The user reports that the current control is not working reliably even at approximately two feet and cannot select an answer in the assistant's question box. The halo's appearance was received positively; usable target selection was not demonstrated. Runtime “tilt active” / “output enabled” and generated move requests do not supersede this report. No completed scored trial establishes the 5–10-foot requirement.
 
 See the [complete difficulties and judgment review](docs/reviews/2026-10-27-usability.md). Treat live usability as failed/unresolved despite passing automated checks.
+
+
+## 0.8.1 recovery checks
+
+The 165-test suite passes after adding regressions for legacy profile loading, ordinary translation after settling, consistent translation gain across synthetic apparent hand sizes, safe drag release and preservation of calibration during recovery, first-profile backup, disabled shortcut arbitration, accurate camera-off telemetry, and event ownership when the reported PID is zero. Existing tilt tests now explicitly enable tilt.
+
+These checks demonstrate the repaired state transitions, not successful target selection at two feet or 5–10 feet. The earlier live failure remains blocking. Full-hand edge rejection, uncertain posture classification, rotated/occluded fingers and real-distance recognition remain possible causes of difficulty. Do not infer their resolution from this recovery.
+
+
+The local 0.8.1 update launched with the existing Accessibility/post-event permissions, camera at 30 fps, Fluid pointing active, tilt off and finger shortcuts off. The installed sources matched the recovery source files. A first owned-window check cancelled on an untagged external click after successful single/double delivery and released safely; that result was preserved locally. A second complete AppKit round trip passed left/right pairs, double click counts, drag, scroll, visible/polled press, ownership-tag propagation and non-stuck release. These are event-delivery results only. The live status also reported partial-hand edge rejection during inspection; that gate remains unchanged and may still interrupt actual use.

@@ -4,7 +4,7 @@
 
 An experimental macOS app that turns camera-tracked hand movement into pointer control. Built for playful, low-effort interaction and quick personal calibration.
 
-**Status: prototype, version 0.8.0.** Pointer control has been used interactively, but gesture shortcuts, distant tracking, rotated hands, and compatibility across games and popups still need live validation. This source publication does not certify those features as reliable.
+**Status: prototype, version 0.8.1.** Pointer control has been used interactively, but gesture shortcuts, distant tracking, rotated hands, and compatibility across games and popups still need live validation. This source publication does not certify those features as reliable.
 
 The native app currently appears as **Control**. Keeping that internal name and bundle identifier preserves continuity with earlier local builds; this public edition is called **Fluid Control**.
 
@@ -12,7 +12,15 @@ The native app currently appears as **Control**. Keeping that internal name and 
 
 **Not reliable yet.** The user reports inability to select a feedback answer at approximately two feet. The required operating distance is 5–10 feet, and that requirement has not been demonstrated. Track [blocking issue #1](https://github.com/cjschaffer14-web/fluid-control/issues/1). See the [failure and judgment review](docs/reviews/2026-10-27-usability.md) before interpreting tests or the tracking halo as acceptance evidence.
 
-## New in 0.8.0
+## Recovery in 0.8.1
+
+A regression in 0.8 silently enabled tilt for older profiles. Once the hand settled, tilt replaced ordinary translation and suppressed smaller movements. Fluid mode also multiplied pointer gain by apparent distance, changing an earlier usable response. The recovery removes that multiplier and makes tilt opt-in.
+
+**Fluid pointer** restores ordinary translation pointing with tilt and finger shortcuts off. It keeps your calibration and sensitivity, releases any held drag, and saves the first pre-recovery profile locally. **Tilt ON/OFF** explicitly selects the experimental rotation mode without competing finger shortcuts. Double click, scrolling and desktop chords remain separate menu opt-ins; their recognition is still unresolved. The local recovery updater starts the camera and pointer through the existing permissions.
+
+The halo and click sound remain. Camera-off status clears stale frame-rate telemetry. Injected events carry a process-local ownership tag so source-PID-zero routes can be distinguished from untagged physical mouse events. This is defensive hardening; logs did not prove a self-triggering takeover loop.
+
+## Introduced in 0.8.0
 
 - A non-interactive halo follows the active window: white means tracked but paused/resting/not armed, green means ready or tilt precision, amber means insufficient detail/partial hand/delay, and red means the hand is lost. It does not detect eye gaze. Toggle it from Control's menu.
 - A stationary hand can enter wrist-tilt precision after settling; small rotations provide fine adjustment, and larger hand travel returns to coarse control. This remains an unvalidated usability experiment, with entry reasons exposed in diagnostics.
@@ -29,7 +37,7 @@ The native app currently appears as **Control**. Keeping that internal name and 
 
 ## Room positions and calling Control
 
-This is a map of saved camera positions and relative hand size, **not a scan of walls or furniture**. Keep the camera fixed. In each comfortable seated or standing location, click **Save here**, then hold an open hand still for about one second. Up to eight positions retain the current profile. Use **Room map** to see them.
+This is a map of saved camera positions and relative hand size, **not a scan of walls or furniture**. Keep the camera fixed. In each comfortable seated or standing location, choose **Save position here** from Control’s menu, then hold an open hand still for about one second. Up to eight positions retain the current profile. Use **Room map** to see them.
 
 Wave an open hand back and forth with three direction changes to recall a matching profile and resume at the current cursor. A single sweep is not a recall wave. Ambiguous or unmatched positions do not load a profile; the app asks you to save a position. Apparent hand size varies with orientation, so use a similar relaxed open hand when teaching and recalling positions. Moving the camera invalidates the map: save positions again. Save a position again after tuning its profile.
 

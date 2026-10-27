@@ -1,5 +1,5 @@
 """Latest-frame camera pipeline and local speech. UI and HID never run on capture thread."""
-from dataclasses import asdict
+from dataclasses import asdict, replace
 from pathlib import Path
 import json
 import logging
@@ -204,6 +204,35 @@ class Runtime:
             self.message = self.core.status
             return True
 
+    def restore_pointer(self):
+        """Restore translation pointing without discarding the user's calibration."""
+        with self.lock:
+            DATA.mkdir(parents=True, exist_ok=True)
+            old = DATA/'profile.json'
+            backup = DATA/'profile-before-0.8.1.json'
+            if old.exists() and not backup.exists():
+                # Exclusive creation preserves the first pre-recovery profile.
+                with backup.open('x') as saved:
+                    saved.write(old.read_text())
+            self.previous_profile=replace(self.core.profile)
+            self.core.cancel('Pointer restored · release pinch to resume')
+            self._dispatch();self.output.release()
+            self.core.profile.motion_scheme='fluid'
+            self.core.profile.shortcuts=False
+            self.core.profile.tilt_precision=False
+            self.core.mode='pointer'
+            self.desktop_swipes=False
+            self.swipes.reset();self.shortcuts.clear();self.wave.clear()
+            self.shortcut_reserved=False
+            self.scroll_remaining=0
+            self.takeover_until=0
+            self.last_shortcut=None
+            self.core.x,self.core.y=self.output.position()
+            self.output.current=(self.core.x,self.core.y)
+            profile_save(self.core.profile)
+            self.message='Fluid pointer restored · pinch to click; hold to drag'
+            LOG.info('Restored translation pointer; tilt and finger shortcuts disabled; calibration retained')
+
     def takeover(self, source=None, now=None):
         """Yield to physical input briefly; only an explicit pause stays paused."""
         if self.core.paused or self.practice:
@@ -264,11 +293,15 @@ class Runtime:
             self.threads.append(thread)
 
     def stop_camera(self):
-        self.pause(True)
-        self.capture_stop.set()
-        self.frame = self.jpeg = None
-        self.message = 'Camera off'
-        self.metrics['tracked'] = False
+        with self.lock:
+            self.pause(True)
+            self.capture_stop.set()
+            self.frame = self.jpeg = None
+            self.latest_obs=None
+            self.metrics.update(fps=0,palm_px=0,age_ms=0,tracked=False,inference_ms=0,
+                                camera_width=0,camera_height=0,observed_at=0)
+            self.message = 'Camera off'
+            LOG.info('Camera stopped; control paused')
 
     def _capture(self, token, index):
         cap = None

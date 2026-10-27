@@ -3,8 +3,18 @@ import ctypes as C
 import os
 import time
 import math
+import secrets
 from collections import deque
 import Quartz as Q
+
+# Process-local ownership survives event routes that report source PID zero.
+EVENT_TAG = secrets.randbits(56) or 1
+
+
+def is_own_event(event):
+    return event is not None and (
+        Q.CGEventGetIntegerValueField(event, Q.kCGEventSourceUserData) == EVENT_TAG or
+        Q.CGEventGetIntegerValueField(event, Q.kCGEventSourceUnixProcessID) == os.getpid())
 
 
 class Point(C.Structure):
@@ -198,6 +208,7 @@ class Output:
         if event is None:
             raise RuntimeError('macOS could not create an input event')
         Q.CGEventSetIntegerValueField(event, Q.kCGEventSourceUnixProcessID, os.getpid())
+        Q.CGEventSetIntegerValueField(event, Q.kCGEventSourceUserData, EVENT_TAG)
         Q.CGEventPost(Q.kCGHIDEventTap, event)
 
     def mouse(self, kind, x, y, count=1, right=False):

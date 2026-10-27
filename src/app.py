@@ -80,10 +80,13 @@ class AppDelegate(A.NSObject):
         self.demo = None
         self.demo_active = False
         self.demo_grab = None
+        self.restore_on_launch='--restore-pointer' in sys.argv
+        if self.restore_on_launch:
+            self.rt.restore_pointer()
         self.auto_swipes='--desktop-swipes' in sys.argv
         self.next_status=0
         self.pending_desktop=None
-        self.auto_fluid=self.auto_swipes and self.rt.core.profile.motion_scheme=='fluid' and '--live-demo' not in sys.argv
+        self.auto_fluid=(self.restore_on_launch or self.auto_swipes and self.rt.core.profile.motion_scheme=='fluid') and '--live-demo' not in sys.argv
         self.last_takeover_queued=0
         self.click_check=None
         self.hotkeys = PERMISSIONS.control_register_hotkeys() if PERMISSIONS else 0
@@ -109,7 +112,7 @@ class AppDelegate(A.NSObject):
         signal.signal(signal.SIGINT, lambda *_: self.rt.ui_actions.put(('quit',None)))
         if '--live-demo' in sys.argv:
             self.demo_(None)
-        elif self.auto_swipes:
+        elif self.auto_swipes or self.restore_on_launch:
             self.camera_(None)
         if '--smoke-ui' in sys.argv:
             self.smoke_end = time.monotonic()+5
@@ -149,7 +152,7 @@ class AppDelegate(A.NSObject):
         self.fluid_button=self.button('Fluid pointer',((276,22),(155,30)),'fluid:')
         self.label('UPDATED · v'+VERSION,((446,26),(225,26)),14,A.NSColor.systemBlueColor())
         self.label('Your hand moves. Your computer follows.', ((24,57),(400,25)), 14, A.NSColor.secondaryLabelColor())
-        self.button('Save here',((440,55),(110,28)),'savePosition:')
+        self.tilt_button=self.button('Tilt mode',((440,55),(110,28)),'tilt:')
         self.button('Room map',((560,55),(110,28)),'roomMap:')
         self.cam_button = self.button('Start camera', ((20,94),(145,34)), 'camera:')
         self.start_button = self.button('Start control', ((175,94),(155,34)), 'toggle:')
@@ -284,7 +287,8 @@ class AppDelegate(A.NSObject):
         elif not self.rt.core.paused:
             cg = event.CGEvent()
             source = Q.CGEventGetIntegerValueField(cg, Q.kCGEventSourceUnixProcessID) if cg else 0
-            if source != os.getpid():
+            from native import is_own_event
+            if not is_own_event(cg):
                 now=time.monotonic()
                 if now-self.last_takeover_queued>.08:
                     self.last_takeover_queued=now
@@ -398,8 +402,13 @@ class AppDelegate(A.NSObject):
 
     def tilt_(self,sender):
         with self.rt.lock:
-            self.rt.core.profile.tilt_precision=not self.rt.core.profile.tilt_precision
-            self.rt.core.tilt.reset();profile_save(self.rt.core.profile)
+            enabled=not self.rt.core.profile.tilt_precision
+            self.rt.restore_pointer()
+            self.rt.core.profile.tilt_precision=enabled
+            profile_save(self.rt.core.profile)
+            self.rt.message='Tilt enabled · settle hand, then make small wrist tilts' if enabled else 'Tilt off · move hand to point'
+        self.auto_fluid=True
+        if self.rt.capture_stop.is_set():self.camera_(None)
 
     def distanceDemo_(self,sender):
         self.demo_(None)
@@ -439,9 +448,8 @@ class AppDelegate(A.NSObject):
         self.setScheme('classic')
 
     def fluid_(self, sender):
-        self.setScheme('fluid')
-        self.rt.set_mode('pointer')
-        self.rt.enable_swipes(self.rt.core.profile.shortcuts)
+        self.rt.restore_pointer()
+        self.auto_swipes=False
         self.auto_fluid=True
         if self.rt.capture_stop.is_set():
             self.camera_(None)
@@ -885,6 +893,7 @@ class AppDelegate(A.NSObject):
                 self.bar.button().setTitle_('Control ●' if active else ('Control ↔' if self.rt.desktop_swipes else 'Control ◌'))
                 self.start_button.setTitle_('Pause control' if active else 'Start control')
                 self.fluid_button.setTitle_('Fluid ●' if active and self.rt.core.profile.motion_scheme=='fluid' else 'Fluid pointer')
+                self.tilt_button.setTitle_('Tilt ON' if self.rt.core.profile.tilt_precision else 'Tilt OFF')
                 self.help.setStringValue_('2-finger tap: double click. 2-finger flick: scroll. 3 fingers: desktops. Open palm: point / tilt.' if self.rt.core.profile.shortcuts else ('Fluid: gentle aim. Pinch: click / hold to drag. Fist: rest. Esc: pause.' if self.rt.core.profile.motion_scheme=='fluid' else 'One finger: quick. Open hand: precise. Pinch: click. Fist: rest. Esc: pause.'))
                 self.cam_button.setTitle_('Start camera' if self.rt.capture_stop.is_set() else 'Stop camera')
                 listening = self.rt.voice_until > time.monotonic()
@@ -901,7 +910,7 @@ class AppDelegate(A.NSObject):
                 self.halo_state=tracking_state(m,time.monotonic(),camera_on=not self.rt.capture_stop.is_set(),
                     paused=self.rt.core.paused,ready=self.rt.core.rearmed,handoff=bool(self.rt.takeover_until),
                     precision=self.rt.core.tilt.active,access=bool(trusted()) or self.rt.practice,
-                    resting=self.rt.core.status.startswith('Clutched'))
+                    resting=self.rt.core.status.startswith('Clutched'),tilt_enabled=self.rt.core.profile.tilt_precision)
                 self.halo.update(self.halo_state,not self.rt.capture_stop.is_set())
                 if hasattr(self,'room_window') and self.room_window.isVisible():
                     self.room_view.snapshot=self.rt.room.snapshot();self.room_view.setNeedsDisplay_(True)
@@ -912,7 +921,9 @@ class AppDelegate(A.NSObject):
                     name=action['kind'].replace('_',' ')
                     if action['kind']=='desktop':name+=' '+action['direction']
                     hint='Recognized: '+name
-                self.finger_label.setStringValue_('Seeing: '+names+' · '+(self.rt.core.tilt.reason if active and not self.rt.takeover_until and self.rt.metrics.get('finger_mask')!=3 else hint))
+                if active and not self.rt.takeover_until and not self.rt.core.profile.shortcuts:
+                    hint=self.rt.core.tilt.reason if self.rt.core.profile.tilt_precision else 'Move hand to point · pinch to click'
+                self.finger_label.setStringValue_('Seeing: '+names+' · '+hint)
                 self.finger_label.setHidden_(self.rt.capture_stop.is_set())
                 access = 'Accessibility ready' if trusted() else 'Accessibility required for desktop control'
                 swipe=(' · '+self.rt.core.figure.replace('_',' ') if active else '')+(' · Swipes ON' if self.rt.desktop_swipes else '')+(' · '+self.rt.room.active if self.rt.room.active else '')

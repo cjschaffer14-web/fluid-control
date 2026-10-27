@@ -25,7 +25,9 @@ class TiltPrecision:
         self.filtered=(0.,0.);self.last=(0.,0.);self.reason='Hold hand still to enable tilt';self.progress=0.
 
     def feed(self,o,enabled=True):
-        if not enabled or o is None or o.geometry!='world' or not valid_basis(o.palm_basis):
+        if not enabled:
+            self.reset();self.reason='Tilt off · move hand to point';return None
+        if o is None or o.geometry!='world' or not valid_basis(o.palm_basis):
             self.reset();self.reason='Waiting for clear 3D hand geometry';return None
         if self.last_t is not None and (o.t<=self.last_t or o.t-self.last_t>.15 or o.hand!=self.hand):self.reset()
         dt=min(.1,max(.001,o.t-self.last_t)) if self.last_t is not None else 1/30
