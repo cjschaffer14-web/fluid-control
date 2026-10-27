@@ -1,0 +1,3 @@
+VERSION = '0.6.1'
+BUILD = '7'
+UPDATED = 'October 27, 2026'
