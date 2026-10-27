@@ -4,9 +4,26 @@
 
 An experimental macOS app that turns camera-tracked hand movement into pointer control. Built for playful, low-effort interaction and quick personal calibration.
 
-**Status: prototype, version 0.6.1.** Pointer control has been used interactively, but gesture shortcuts, distant tracking, rotated hands, and compatibility across games and popups still need live validation. This source publication does not certify those features as reliable.
+**Status: prototype, version 0.7.0.** Pointer control has been used interactively, but gesture shortcuts, distant tracking, rotated hands, and compatibility across games and popups still need live validation. This source publication does not certify those features as reliable.
 
 The native app currently appears as **Control**. Keeping that internal name and bundle identifier preserves continuity with earlier local builds; this public edition is called **Fluid Control**.
+
+## New in 0.7.0
+
+- Scrolling measures index/middle fingertip movement, so the palm can stay still. Brief finger-shape fluctuations are tolerated and diagonal desktop sweeps need less rigid alignment.
+- Fluid mode preserves enabled desktop shortcuts. With saved room positions, use **three fingers** for desktops; a four-finger open-hand wave is reserved for position recall.
+- The preview draws all 21 joints, including the thumb, with an inset showing estimated 3D geometry. Finger curls and a palm coordinate frame use the model's world landmarks when available. Camera depth remains an estimate; occluded joints can be wrong.
+- Actual mouse presses have a short generated acoustic tap. Toggle **Click sound on / off** in Control's menu. It mixes with existing audio; it does not change the volume of other applications or provide physical haptics.
+
+## Room positions and calling Control
+
+This is a map of saved camera positions and relative hand size, **not a scan of walls or furniture**. Keep the camera fixed. In each comfortable seated or standing location, click **Save here**, then hold an open hand still for about one second. Up to eight positions retain the current profile. Use **Room map** to see them.
+
+Wave an open hand back and forth with three direction changes to recall a matching profile and resume at the current cursor. A single sweep is not a recall wave. Ambiguous or unmatched positions do not load a profile; the app asks you to save a position. Apparent hand size varies with orientation, so use a similar relaxed open hand when teaching and recalling positions. Moving the camera invalidates the map: save positions again. Save a position again after tuning its profile.
+
+Press **Voice** and say “calibrate here” to save a position or “Control” to recall it. Optional **Listen for “Control” on / off** enables local microphone listening for this session. It is off at launch. While waiting, only a sufficiently confident exact “Control” result opens an eight-second command window; it also tries to recall your position. Commands such as “calibrate here” can then be spoken. Camera tracking must see your hand to save or recall. A webcam does not locate a voice in the room. Wake recognition is experimental and may miss speech or respond incorrectly in background audio. Turn it off from the menu to close wake listening.
+
+Room anchors store camera-relative hand location, relative size, handedness and profiles locally under application support. No room imagery is saved. Separate camera selections use separate anchor files. To reset a map, quit Control and remove the corresponding `room-positions*.json` file there. Microphone audio is processed locally and is not saved.
 
 ## What is here
 

@@ -1,39 +1,38 @@
-"""Exclusive finger chords. No output, timer threads, or guessing across lost frames."""
+"""Finger chords with fingertip scroll travel and brief classification tolerance."""
 import math
 
 
 class FingerShortcuts:
     def __init__(self):
-        self.last_fire=-100.0
-        self.blocked=None
-        self.previous=None
+        self.last_fire=-100.0;self.blocked=None;self.previous=None
+        self.candidate=None;self.candidate_at=None;self.release_since=None
         self.reset()
 
     def reset(self):
-        self.group=None
-        self.rest=None
-        self.anchor=None
-        self.moving_at=None
-        self.tap_at=None
-        self.reserved=False
+        self.group=None;self.rest=None;self.anchor=None
+        self.moving_at=None;self.tap_at=None;self.reserved=False;self.progress=0.
 
     def clear(self):
-        self.previous=None
-        self.blocked=None
-        self.reset()
+        self.previous=None;self.blocked=None;self.candidate=None;self.candidate_at=None;self.release_since=None;self.reset()
 
     def hint(self):
         if self.blocked:return 'Relax your fingers for the next gesture'
         if self.tap_at is not None:return 'Tap: reopen index + middle fingers'
-        if self.group=='two':return 'Two fingers ready: tap or flick' if self.anchor else 'Raise index + middle together'
-        if self.group=='three':return 'Swipe left or right' if self.anchor or (self.previous and self.previous.finger_mask.bit_count()==3) else 'Open palm: hold, then swipe'
-        return 'One finger: point · two: tap/flick · three: swipe'
+        if self.group=='two':return 'Two fingers: move or flick UP / DOWN'
+        if self.group=='three':return 'Sweep LEFT / RIGHT · '+str(round(self.progress*100))+'%'
+        return 'Two fingers: scroll · three: desktops · open-hand wave: recall position'
 
     @staticmethod
     def group_for(mask):
         if mask==3:return 'two'
         if mask.bit_count()>=3:return 'three'
         return None
+
+    @staticmethod
+    def position(o,group):
+        if group=='two' and o.gesture_x is not None and o.gesture_y is not None:
+            return o.gesture_x,o.gesture_y
+        return o.x,o.y
 
     def fire(self,o,action,group):
         self.last_fire=o.t;self.blocked=group
@@ -47,63 +46,59 @@ class FingerShortcuts:
             if o is None:self.blocked=None
             return None
         if self.previous and (o.t<=self.previous.t or o.t-self.previous.t>.15 or o.hand!=self.previous.hand):
-            self.reset();self.blocked=None
+            self.clear()
         self.previous=o
-        group=self.group_for(o.finger_mask)
-        if group=='three' and not allow_desktop:group=None
-        if group=='two' and not allow_two:
-            self.reset();return None
+        raw=self.group_for(o.finger_mask)
+        if raw=='three' and not allow_desktop:raw=None
+        if raw=='two' and not allow_two:self.reset();return None
+        # A transient ring-finger estimate must not erase a two-finger stroke.
+        group=raw
+        if self.group and raw!=self.group and not (self.group=='two' and o.finger_mask in (0,1,2)):
+            if raw!=self.candidate or self.candidate_at is None:self.candidate,self.candidate_at=raw,o.t
+            if o.t-self.candidate_at<.09:group=self.group
+        else:self.candidate=None;self.candidate_at=None
         if self.blocked:
-            if group!=self.blocked:self.blocked=None
+            if raw!=self.blocked:
+                if self.release_since is None:self.release_since=o.t
+                if o.t-self.release_since>=.09:self.blocked=None;self.release_since=None
             else:
-                self.reserved=True
-                return None
-        if o.t-self.last_fire<.6:
-            self.reset()
-            self.reserved=group=='two'
-            return None
-        # A two-finger air tap is curl -> reopen, with the palm almost stationary.
-        if self.group=='two' and self.anchor and group is None and o.finger_mask in (0,1,2):
+                self.release_since=None
+            if self.blocked:
+                self.reserved=raw=='two';return None
+        if o.t-self.last_fire<.50:
+            self.reset();self.reserved=group=='two';return None
+        if self.group=='two' and self.anchor and raw is None and o.finger_mask in (0,1,2):
             self.reserved=True
             if self.tap_at is None:self.tap_at=o.t
-            if o.t-self.tap_at>.45 or math.hypot(o.x-self.anchor.x,o.y-self.anchor.y)>.045:
-                self.reset()
+            if o.t-self.tap_at>.45 or math.hypot(o.x-self.anchor.x,o.y-self.anchor.y)>.045:self.reset()
             return None
         if self.tap_at is not None:
             duration=o.t-self.tap_at
-            if group=='two' and .06<=duration<=.45 and math.hypot(o.x-self.anchor.x,o.y-self.anchor.y)<.045:
+            if raw=='two' and .06<=duration<=.45 and math.hypot(o.x-self.anchor.x,o.y-self.anchor.y)<.045:
                 return self.fire(o,dict(kind='double_click'),'two')
             self.reset()
-        if group is None:
-            self.reset();return None
-        if group!=self.group:
-            self.reset();self.group=group
+        if group is None:self.reset();return None
+        if group!=self.group:self.reset();self.group=group
         self.reserved=group=='two'
         if self.anchor is None:
-            if group=='two' or o.finger_mask.bit_count()==3:
-                if self.rest is None:self.rest=o
-                if o.t-self.rest.t<.075:return None
-                self.anchor=self.rest
-            else:
-                if self.rest is None or math.hypot(o.x-self.rest.x,o.y-self.rest.y)>.018:
-                    self.rest=o
-                if o.t-self.rest.t>=.16:self.anchor=o
-                return None
-        dx,dy=o.x-self.anchor.x,o.y-self.anchor.y
+            self.anchor=o;return None
+        x,y=self.position(o,group);ax,ay=self.position(self.anchor,group)
+        dx,dy=x-ax,y-ay
+        vertical=o.palm_height_fraction or o.palm_fraction
+        travel=(max(.018,min(.065,vertical*.42)) if group=='two' else max(.045,min(.13,o.palm_fraction*1.5)))*scale
         distance=abs(dy) if group=='two' else abs(dx)
-        if self.moving_at is None and distance>.012:self.moving_at=o.t
-        if self.moving_at is None:return None
-        self.reserved=group=='two'
-        duration=o.t-self.moving_at
-        if duration>.65:
-            self.reset();return None
+        self.progress=min(1.,distance/max(travel,1e-6))
+        elapsed=o.t-self.anchor.t
+        if elapsed>1.0:
+            self.anchor=o;self.progress=0.;return None
         if group=='two':
-            travel=max(.035,min(.10,o.palm_fraction*1.5))*scale
-            if .07<=duration<=.50 and abs(dy)>=travel and abs(dy)>abs(dx)*2.4 and abs(dy)/max(.1,duration)>.26:
-                amount=max(180,min(600,abs(dy)/max(.1,duration)*650))
+            if .06<=elapsed<=.85 and abs(dy)>=travel and abs(dy)>abs(dx)*1.5 and abs(dy)/max(.1,elapsed)>.075:
+                amount=max(120,min(650,abs(dy)/max(.1,elapsed)*900))
                 return self.fire(o,dict(kind='scroll',dy=-math.copysign(amount,dy)),'two')
         else:
-            travel=max(.055,min(.18,o.palm_fraction*2.3))*scale
-            if .09<=duration<=.65 and abs(dx)>=travel and abs(dx)>abs(dy)*2.8 and abs(dx)/max(.1,duration)>.32:
+            if raw!='three':return None
+            self.reserved=abs(dx)>.025 and abs(dx)>abs(dy)*1.65
+            minimum=.12 if o.finger_mask.bit_count()>3 else .075
+            if minimum<=elapsed<=.85 and abs(dx)>=travel and abs(dx)>abs(dy)*1.65 and abs(dx)/max(.1,elapsed)>.18:
                 return self.fire(o,dict(kind='desktop',direction='right' if dx>0 else 'left'),'three')
         return None

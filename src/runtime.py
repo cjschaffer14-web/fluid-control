@@ -15,7 +15,8 @@ from native import Output, trusted
 from attempts import Attempt
 from swipes import DesktopSwipes
 from tracking import hand_region, search_region, restore
-from hand_geometry import hand_points, extensions
+from hand_geometry import hand_points, extensions, extension_scores, map_hand, HandPoseFilter, BONES
+from positions import RoomPositions, WaveRecall
 from shortcuts import FingerShortcuts
 
 LOG = logging.getLogger('control')
@@ -24,6 +25,8 @@ HERE = Path(__file__).resolve().parent
 MODEL = Path(os.environ.get('CONTROL_HAND_MODEL', str(HERE/'hand_landmarker.task')))
 if not MODEL.exists() and 'CONTROL_HAND_MODEL' not in os.environ:
     MODEL = HERE.parent/'models/hand_landmarker.task'
+    if not MODEL.exists():
+        MODEL = HERE.parent/'Control.app/Contents/Resources/hand_landmarker.task'
 
 
 def profile_load():
@@ -60,7 +63,8 @@ def extract(result, shape, t, style):
     pinch = np.linalg.norm(geometry[4]-geometry[8]) / anatomy
     side = min(segment_distance(geometry[4], geometry[5], geometry[6]), segment_distance(geometry[4], geometry[6], geometry[7])) / anatomy
     contact = float(side if style == 'side' else pinch)
-    ext = extensions(geometry)
+    scores=extension_scores(geometry)
+    ext = [v>.60 for v in scores[1:]]
     curled = not any(ext)
     pose = 'point'
     if curled:
@@ -76,9 +80,13 @@ def extract(result, shape, t, style):
         pose='point'
     hand = result.handedness[0][0].category_name if result.handedness else 'unknown'
     figure='one_finger' if ext[0] and not any(ext[1:]) else ('open_hand' if sum(ext)>=3 else 'neutral')
+    tips=np.mean(p[[8,12]],axis=0)
     return Observation(t, float(1-anchor[0]/w), float(anchor[1]/h), contact, float(scale), pose, hand,
                        float(pinch),float(side),bool(curled),all(ext) and pinch>.55,float(scale/w),figure,geometry_source,
-                       sum(1<<i for i,v in enumerate(ext) if v))
+                       sum(1<<i for i,v in enumerate(ext) if v),
+                       gesture_x=float(1-tips[0]/w),gesture_y=float(tips[1]/h),
+                       palm_height_fraction=float(scale/h),extension_scores=tuple(scores[1:]),
+                       hand_map=map_hand(geometry,geometry_source))
 
 
 class Runtime:
@@ -92,6 +100,7 @@ class Runtime:
         self.capture_stop = threading.Event()
         self.capture_stop.set()
         self.camera_index = 0
+        self.room_camera = 0
         self.frame = None
         self.frame_id = 0
         self.frame_time = 0
@@ -105,6 +114,7 @@ class Runtime:
         self.cal_resume = False
         self.previous_profile = None
         self.voice_until = 0
+        self.voice_wake = False
         self.voice_message = 'Voice off'
         self.voice_thread = None
         self.voice_hold = False
@@ -117,6 +127,10 @@ class Runtime:
         self.swipes = DesktopSwipes()
         self.shortcuts = FingerShortcuts()
         self.shortcut_reserved=False
+        self.pose_filter=HandPoseFilter()
+        self.room=RoomPositions(DATA/'room-positions.json')
+        self.wave=WaveRecall()
+        self.latest_obs=None
         self.scroll_remaining=0.0
         self.scroll_time=time.monotonic()
         self.last_shortcut=None
@@ -233,7 +247,11 @@ class Runtime:
             self.stop_camera()
         self.capture_stop = threading.Event()
         token = self.capture_stop
+        if index!=self.room_camera:
+            self.room_camera=index
+            self.room=RoomPositions(DATA/('room-positions.json' if index==0 else f'room-positions-camera-{index}.json'))
         self.camera_index = index
+        self.pose_filter.clear();self.wave.clear()
         self.frame = self.jpeg = None
         self.frame_id = 0
         self.message = 'Opening camera…'
@@ -334,7 +352,7 @@ class Runtime:
                         cropped=bool(result.hand_landmarks)
                     region=hand_region(result,frame.shape)
                     now = time.monotonic()
-                    obs = extract(result, frame.shape, stamp, style)
+                    obs = self.pose_filter.feed(extract(result, frame.shape, stamp, style))
                     with self.lock:
                         if token.is_set():
                             break
@@ -343,11 +361,14 @@ class Runtime:
                                             figure=obs.figure if obs else 'none',detail_crop=cropped,
                                             geometry=obs.geometry if obs else 'none',contact=round(obs.contact,3) if obs else None,
                                             fingers=obs.finger_mask.bit_count() if obs else 0,
-                                            finger_mask=obs.finger_mask if obs else 0)
+                                            finger_mask=obs.finger_mask if obs else 0,
+                                            hand_map=obs.hand_map if obs else None)
                         if obs and self.attempt and not self.attempt.finished:
                             self.attempt.sample(obs,self.core.state)
-                        reserved=self.process_shortcuts(obs,now)
-                        direction=self.swipes.feed(obs,allowed=(not self.core.profile.shortcuts and self.desktop_swipes and not self.practice
+                        self.latest_obs=obs
+                        position_reserved=self.process_position(obs,now)
+                        reserved=position_reserved or self.process_shortcuts(obs,now)
+                        direction=self.swipes.feed(obs,allowed=(not self.core.profile.shortcuts and self.desktop_swipes and not self.room.anchors and not self.practice
                                                    and not self.calibration and not self.core.finger_down
                                                    and self.core.state not in ('contact','drag') and now-stamp<=.15))
                         if direction:
@@ -373,9 +394,20 @@ class Runtime:
                         image = cv2.resize(cv2.flip(frame, 1), (640, 360))
                         if result.hand_landmarks:
                             lm = result.hand_landmarks[0]
-                            for a,b in ((0,5),(5,9),(9,13),(13,17),(17,0),(5,6),(6,7),(7,8),(0,1),(1,2),(2,3),(3,4)):
+                            for a,b in BONES:
                                 cv2.line(image, (int((1-lm[a].x)*640),int(lm[a].y*360)),
                                          (int((1-lm[b].x)*640),int(lm[b].y*360)), (150,230,130), 2)
+                            for point in lm:
+                                cv2.circle(image,(int((1-point.x)*640),int(point.y*360)),3,(90,210,255),-1)
+                            if obs and obs.hand_map:
+                                image[12:170,475:628]=(24,29,35)
+                                joints=np.asarray(obs.hand_map['joints'])
+                                projection=np.column_stack((joints[:,0]*.8+joints[:,2]*.45, joints[:,1]*.85-joints[:,2]*.25))
+                                span=max(2.5,float(np.max(np.abs(projection)))*2.2)
+                                xy=(projection/span*120+np.array([550,95])).astype(int)
+                                for a,b in BONES:cv2.line(image,tuple(xy[a]),tuple(xy[b]),(255,170,80),2)
+                                for joint in xy:cv2.circle(image,tuple(joint),3,(240,240,240),-1)
+                                cv2.putText(image,'3D estimate',(483,29),cv2.FONT_HERSHEY_SIMPLEX,.36,(220,220,220),1)
                         ok, encoded = cv2.imencode('.jpg', image, [cv2.IMWRITE_JPEG_QUALITY, 70])
                         if ok:
                             self.jpeg = encoded.tobytes()
@@ -463,6 +495,16 @@ class Runtime:
             self.voice_thread = threading.Thread(target=self._voice, name='control-voice', daemon=True)
             self.voice_thread.start()
 
+    def set_wake(self,enabled):
+        self.voice_wake=bool(enabled)
+        if enabled:
+            self.voice_message='Listening locally for “Control” · wave also recalls a saved position'
+            if self.voice_thread is None or not self.voice_thread.is_alive():
+                self.voice_thread=threading.Thread(target=self._voice,name='control-voice',daemon=True)
+                self.voice_thread.start()
+        else:
+            self.voice_until=0;self.voice_message='Wake listening off'
+
     def _voice(self):
         try:
             import sounddevice as sd
@@ -476,8 +518,9 @@ class Runtime:
                 raise RuntimeError('Local speech model missing; see README')
             model = Model(str(path))
             grammar = list(COMMANDS)+['[unk]']
-            while self.voice_until > time.monotonic() and not self.stop.is_set():
+            while (self.voice_wake or self.voice_until > time.monotonic()) and not self.stop.is_set():
                 rec = KaldiRecognizer(model, 16000, json.dumps(grammar))
+                rec.SetWords(True)
                 audio = queue.Queue(maxsize=12)
                 def callback(data, frames, clock, status):
                     try:
@@ -485,17 +528,26 @@ class Runtime:
                     except queue.Full:
                         pass
                 with sd.RawInputStream(samplerate=16000, blocksize=1600, dtype='int16', channels=1, callback=callback):
-                    while self.voice_until > time.monotonic() and not self.stop.is_set():
+                    while (self.voice_wake or self.voice_until > time.monotonic()) and not self.stop.is_set():
                         try:
                             data = audio.get(timeout=.15)
                         except queue.Empty:
                             continue
                         if rec.AcceptWaveform(data):
-                            text = json.loads(rec.Result()).get('text','')
+                            recognized=json.loads(rec.Result())
+                            text=recognized.get('text','')
+                            if self.voice_wake and time.monotonic()>self.voice_until:
+                                words=recognized.get('result',[])
+                                if text=='control' and words and min(w.get('conf',0) for w in words)>=.8:
+                                    self.ui_actions.put(('voice','position_recall'))
+                                    self.voice_until=time.monotonic()+8
+                                    self.voice_message='Control heard · say “calibrate here” or another command'
+                                    break
+                                continue
                             cmd = parse_command(text)
                             if cmd:
                                 self.ui_actions.put(('voice', cmd))
-                                self.voice_message = 'Heard: ' + text
+                                self.voice_message = ('Listening for “Control” · ' if self.voice_wake else '')+'Heard: ' + text
                                 self.voice_until = 0
                                 break
                             elif text:
@@ -505,10 +557,16 @@ class Runtime:
                 self.voice_message = 'Voice off · no command heard'
         except Exception as e:
             self.voice_until = 0
+            self.voice_wake = False
             self.voice_message = 'Voice unavailable: ' + str(e)
             LOG.warning('%s', self.voice_message)
 
     def command(self, cmd):
+        if cmd=='position_save':
+            self.save_position();return
+        if cmd=='position_recall':
+            with self.lock:self.recall_position()
+            return
         if cmd in ('desktop_left','desktop_right'):
             if self.desktop_swipes:
                 with self.lock:
@@ -555,6 +613,7 @@ class Runtime:
             self._dispatch()
 
     def close(self):
+        self.voice_wake = False
         self.voice_until = 0
         self.pause(True)
         if self.attempt and not self.attempt.finished:
@@ -586,7 +645,9 @@ class Runtime:
                  and not self.core.finger_down and self.core.state not in ('contact','drag')
                  and not self.voice_hold and not self.takeover_until and obs is not None and now-obs.t<=.15)
         action=self.shortcuts.feed(obs,allowed=allowed,scale=self.core.profile.shortcut_scale,
-                                   allow_desktop=self.desktop_swipes or self.practice,allow_two=not self.core.paused)
+                                   allow_desktop=(self.desktop_swipes or self.practice) and not
+                                   (self.room.anchors and obs and obs.finger_mask==15 and not self.practice),
+                                   allow_two=not self.core.paused)
         reserved=allowed and self.shortcuts.reserved
         if reserved and not self.shortcut_reserved:
             self.core.cancel('Finger shortcut · relax your fingers to resume pointing')
@@ -639,3 +700,48 @@ class Runtime:
                 self.message='Fluid pointer · desktop gestures are off'
                 return
             self.message='Desktop swipes on · hold 3+ fingers briefly, then sweep left or right' if enabled else 'Desktop swipes off'
+
+    def save_position(self):
+        with self.lock:
+            if self.capture_stop.is_set():
+                self.message='Start the camera before saving a position';return
+            if self.practice or self.calibration:
+                self.message='Finish the current trial before saving a position';return
+            self.room.begin(time.monotonic())
+            self.core.cancel('Hold your open hand comfortably still for one second')
+            self._dispatch();self.output.release()
+            self.message=self.core.status
+
+    def recall_position(self):
+        obs=self.latest_obs
+        if obs is None or time.monotonic()-obs.t>.15:
+            self.message='Show your hand to recall a position';return
+        anchor=self.room.recall(obs)
+        if anchor is None:
+            self.message='No clear saved position · choose Save position here first';return
+        self.core.cancel('Position recalled · release to resume')
+        self._dispatch();self.output.release()
+        self.core.profile=Profile.from_dict(anchor['profile'])
+        self.core.fx.cutoff=self.core.fy.cutoff=self.core.profile.cutoff
+        profile_save(self.core.profile)
+        self.core.x,self.core.y=self.output.position()
+        if self.core.paused:self.pause(False)
+        self.desktop_swipes=self.core.profile.shortcuts
+        self.message=anchor['name']+' recalled · pointer recentered at current cursor'
+        self.ui_actions.put(('position_feedback',self.message))
+
+    def process_position(self,obs,now):
+        if self.practice or self.calibration or self.voice_hold or self.takeover_until or self.core.finger_down or self.core.state in ('contact','drag'):
+            self.wave.clear();return False
+        if self.room.collecting is not None:
+            if now-self.room.collecting>8:
+                self.room.collecting=None;self.message='Position not saved · keep your hand visible and still';return False
+            message=self.room.observe(obs,self.core.profile)
+            if message:
+                self.message=message;self.ui_actions.put(('position_feedback',message))
+            return True
+        # Open palm is reserved for recall only after a user has taught a position.
+        if self.room.anchors and obs and obs.finger_mask==15:
+            if self.wave.feed(obs):self.recall_position();return True
+        else:self.wave.clear()
+        return False

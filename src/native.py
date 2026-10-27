@@ -186,6 +186,7 @@ class Output:
         self.click_active = None
         self.next_click = 0.0
         self.click_stats = dict(requested=0,completed=0,cancelled=0)
+        self.click_feedback=None
 
     @staticmethod
     def position():
@@ -203,6 +204,11 @@ class Output:
         e = Q.CGEventCreateMouseEvent(None, kind, (x, y), Q.kCGMouseButtonRight if right else Q.kCGMouseButtonLeft)
         Q.CGEventSetIntegerValueField(e, Q.kCGMouseEventClickState, count)
         self.post(e)
+
+    def feedback(self):
+        if self.click_feedback:
+            try:self.click_feedback()
+            except Exception:pass  # Sound feedback must never affect event delivery.
 
     def release(self):
         if self.click_active or self.click_queue:
@@ -254,6 +260,7 @@ class Output:
                 self.last_count,self.right_down=1,False
                 self.mouse(Q.kCGEventLeftMouseDown, x, y)
                 self.down = True
+                self.feedback()
         elif kind == 'click':
             if not self.click_active and not self.click_queue:
                 self.release()
@@ -272,6 +279,7 @@ class Output:
             if stage=='hover':
                 self.mouse(Q.kCGEventRightMouseDown if right else Q.kCGEventLeftMouseDown,x,y,count,right)
                 self.down,self.right_down,self.last_count=True,right,count
+                self.feedback()
                 self.click_active=(x,y,count,right,'press',now+.060)
             else:
                 self.mouse(Q.kCGEventRightMouseUp if right else Q.kCGEventLeftMouseUp,x,y,count,right)

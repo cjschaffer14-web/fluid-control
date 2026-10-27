@@ -53,7 +53,9 @@ class Attempt:
         row = dict(phase='rest' if age<3 else 'action', contact=obs.contact,
                    pinch=obs.pinch, side=obs.side, curled=obs.curled,
                    palm_px=obs.palm_px, state=state, x=obs.x,y=obs.y,figure=obs.figure,geometry=obs.geometry,
-                   finger_mask=obs.finger_mask)
+                   finger_mask=obs.finger_mask,extension_scores=list(obs.extension_scores),
+                   curls=obs.hand_map.get('curls') if obs.hand_map else None,
+                   gesture_x=obs.gesture_x,gesture_y=obs.gesture_y)
         if not all(math.isfinite(v) for v in (obs.contact,obs.palm_px)):
             return
         self.samples.append(row)

@@ -35,6 +35,25 @@ class FlippedView(A.NSView):
         return True
 
 
+class RoomMapView(A.NSView):
+    snapshot={}
+
+    def drawRect_(self, rect):
+        A.NSColor.colorWithWhite_alpha_(.08,1).setFill();A.NSRectFill(self.bounds())
+        attrs={A.NSFontAttributeName:A.NSFont.systemFontOfSize_(14),A.NSForegroundColorAttributeName:A.NSColor.whiteColor()}
+        def text(s,x,y):F.NSString.stringWithString_(s).drawAtPoint_withAttributes_((x,y),attrs)
+        text('Saved camera positions · size of dot shows relative hand size',18,356)
+        text('Save at your desk, sofa, or standing. Keep the camera fixed.',18,329)
+        text('Open-hand wave: recall. Three fingers: switch desktop.',18,24)
+        if not self.snapshot.get('anchors'):text('No positions yet. Choose Control → Save position here.',20,190)
+        for a in self.snapshot.get('anchors',[]):
+            x=35+a['x']*470;y=70+(1-a['y'])*220
+            size=max(12,min(42,a['size']*240))
+            (A.NSColor.systemGreenColor() if a['name']==self.snapshot.get('active') else A.NSColor.systemBlueColor()).setFill()
+            A.NSBezierPath.bezierPathWithOvalInRect_(((x-size/2,y-size/2),(size,size))).fill()
+            text(a['name'],x-35,y+size/2+4)
+
+
 class AppDelegate(A.NSObject):
     def applicationDidFinishLaunching_(self, notification):
         DATA.mkdir(parents=True, exist_ok=True)
@@ -42,10 +61,18 @@ class AppDelegate(A.NSObject):
         logging.basicConfig(level=logging.INFO, handlers=[handler], format='%(asctime)s %(levelname)s %(message)s')
         b = Q.CGDisplayBounds(Q.CGMainDisplayID())
         self.rt = Runtime((b.origin.x,b.origin.y,b.size.width,b.size.height), '--dry-run' in sys.argv)
+        from feedback_audio import ClickAudio
+        self.click_audio=ClickAudio()
+        try:
+            prefs=json.loads((DATA/'feedback-preferences.json').read_text())
+            self.click_audio.enabled=bool(prefs.get('click_audio',True))
+        except (OSError,ValueError,TypeError):pass
+        self.rt.output.click_feedback=lambda: self.performSelectorOnMainThread_withObject_waitUntilDone_('clickTap:',None,False)
         self.last_image = None
         self.last_metrics = 0
         self.camera_pending = False
         self.voice_pending = False
+        self.wake_pending = False
         self.demo = None
         self.demo_active = False
         self.demo_grab = None
@@ -117,7 +144,9 @@ class AppDelegate(A.NSObject):
         self.label('Control', ((24,16),(350,36)), 28)
         self.fluid_button=self.button('Fluid pointer',((276,22),(155,30)),'fluid:')
         self.label('UPDATED · v'+VERSION,((446,26),(225,26)),14,A.NSColor.systemBlueColor())
-        self.label('Your hand moves. Your computer follows.', ((24,57),(650,25)), 14, A.NSColor.secondaryLabelColor())
+        self.label('Your hand moves. Your computer follows.', ((24,57),(400,25)), 14, A.NSColor.secondaryLabelColor())
+        self.button('Save here',((440,55),(110,28)),'savePosition:')
+        self.button('Room map',((560,55),(110,28)),'roomMap:')
         self.cam_button = self.button('Start camera', ((20,94),(145,34)), 'camera:')
         self.start_button = self.button('Start control', ((175,94),(155,34)), 'toggle:')
         self.voice_button = self.button('Voice · 12 sec', ((340,94),(155,34)), 'voice:')
@@ -175,6 +204,11 @@ class AppDelegate(A.NSObject):
         self.item(app_menu,'Play button challenge','aim:')
         self.item(app_menu,'Try finger shortcuts','shortcutDemo:')
         self.item(app_menu,'Finger shortcuts on / off','shortcuts:')
+        self.item(app_menu,'Save position here · hold hand still','savePosition:')
+        self.item(app_menu,'Recall position · or wave open hand','recallPosition:')
+        self.item(app_menu,'Show saved room positions','roomMap:')
+        self.item(app_menu,'Click sound on / off','clickSound:')
+        self.item(app_menu,'Listen for “Control” on / off','wake:')
         self.item(app_menu,'Fluid pointer · aim + pinch click','fluid:')
         self.item(app_menu,'Run native click check','clickCheck:')
         self.item(app_menu,'Hand figures · quick finger / slow palm','figures:')
@@ -196,6 +230,11 @@ class AppDelegate(A.NSObject):
         self.item(menu,'Start / Pause','toggle:')
         self.item(menu,'Speak one command  ⌥Space','voice:')
         self.item(menu,'Desktop swipes on / off','swipes:')
+        self.item(menu,'Save position here · hold hand still','savePosition:')
+        self.item(menu,'Recall position · or wave open hand','recallPosition:')
+        self.item(menu,'Show saved room positions','roomMap:')
+        self.item(menu,'Click sound on / off','clickSound:')
+        self.item(menu,'Listen for “Control” on / off','wake:')
         self.item(menu,'Desktop left','desktopLeft:')
         self.item(menu,'Desktop right','desktopRight:')
         menu.addItem_(A.NSMenuItem.separatorItem())
@@ -306,6 +345,43 @@ class AppDelegate(A.NSObject):
                 return
         self.rt.listen()
 
+    def wake_(self, sender):
+        if not self.rt.voice_wake and PERMISSIONS:
+            status=PERMISSIONS.control_microphone_status()
+            if status==0:
+                self.wake_pending=True;PERMISSIONS.control_request_microphone();return
+            if status!=3:
+                self.rt.voice_message='Enable Microphone access to use optional wake listening';return
+        self.rt.set_wake(not self.rt.voice_wake)
+
+    def clickTap_(self, sender):
+        self.click_audio.play()
+
+    def clickSound_(self, sender):
+        self.click_audio.enabled=not self.click_audio.enabled
+        (DATA/'feedback-preferences.json').write_text(json.dumps(dict(click_audio=self.click_audio.enabled)))
+        if self.click_audio.enabled:self.click_audio.play()
+        self.rt.message='Click sound '+('on' if self.click_audio.enabled else 'off')
+
+    def savePosition_(self, sender):
+        self.rt.save_position()
+
+    def recallPosition_(self, sender):
+        with self.rt.lock:self.rt.recall_position()
+
+    def roomMap_(self, sender):
+        if not hasattr(self,'room_window'):
+            self.room_window=A.NSWindow.alloc().initWithContentRect_styleMask_backing_defer_(
+                ((0,0),(540,390)),A.NSWindowStyleMaskTitled|A.NSWindowStyleMaskClosable,A.NSBackingStoreBuffered,False)
+            self.room_window.setTitle_('Room positions · camera map')
+            self.room_window.setReleasedWhenClosed_(False)
+            self.room_window.center()
+            self.room_view=RoomMapView.alloc().initWithFrame_(((0,0),(540,390)))
+            self.room_window.setContentView_(self.room_view)
+        self.room_view.snapshot=self.rt.room.snapshot()
+        self.room_view.setNeedsDisplay_(True)
+        self.room_window.makeKeyAndOrderFront_(None)
+
     def swipes_(self, sender):
         if self.rt.capture_stop.is_set():
             self.auto_swipes=True
@@ -337,7 +413,7 @@ class AppDelegate(A.NSObject):
     def fluid_(self, sender):
         self.setScheme('fluid')
         self.rt.set_mode('pointer')
-        self.rt.enable_swipes(False)
+        self.rt.enable_swipes(self.rt.core.profile.shortcuts)
         self.auto_fluid=True
         if self.rt.capture_stop.is_set():
             self.camera_(None)
@@ -359,13 +435,13 @@ class AppDelegate(A.NSObject):
 
     @objc.python_method
     def prepareShortcuts(self):
-        self.shortcut_steps=[('double_click','Raise index + middle fingers, briefly curl both and reopen.'),
-                             ('scroll_down','Raise index + middle fingers and flick DOWN.'),
-                             ('scroll_up','Relax, raise two fingers and flick UP.'),
+        self.shortcut_steps=[('scroll_down','Raise index + middle fingers. Move the fingertips DOWN; a small flick is enough.'),
+                             ('scroll_up','Relax your fingers, then raise index + middle and move UP.'),
                              ('desktop_left','Raise three fingers and swipe LEFT.'),
-                             ('desktop_right','Relax, raise three or more fingers and swipe RIGHT.')]
+                             ('desktop_right','Relax, raise three fingers and sweep RIGHT.'),
+                             ('double_click','Raise index + middle fingers, briefly curl both and reopen.')]
         self.demo_prompt.setStringValue_('Five gestures. Try them naturally. Desktop actions stay inside this demo.')
-        self.demo_goal.setStringValue_('Double click → scroll down → scroll up → desktop left → desktop right')
+        self.demo_goal.setStringValue_('Scroll down → scroll up → desktop left → desktop right → double click')
         self.demo_goal.setMaximumNumberOfLines_(2)
         if not hasattr(self,'shortcut_preview') or self.shortcut_preview.superview()!=self.demo.contentView():
             self.shortcut_preview=A.NSSegmentedControl.alloc().initWithFrame_(((80,324),(460,28)))
@@ -383,6 +459,9 @@ class AppDelegate(A.NSObject):
     def practiceShortcut(self, action):
         if not self.demo_active or self.rt.attempt.task!='shortcuts':return
         name=action['kind']
+        if name=='double_click':
+            self.click_audio.play()
+            self.performSelector_withObject_afterDelay_('clickTap:',None,.11)
         if name=='scroll':name='scroll_up' if action['dy']>0 else 'scroll_down'
         elif name=='desktop':name='desktop_'+action['direction']
         if name.startswith('desktop_'):
@@ -402,6 +481,7 @@ class AppDelegate(A.NSObject):
         from click_check import ClickCheck
         self.rt.pause(True)
         self.click_check=ClickCheck(self.rt.output.bounds,DATA)
+        self.click_check.out.click_feedback=self.rt.output.click_feedback
 
     @objc.python_method
     def setScheme(self, scheme):
@@ -417,7 +497,7 @@ class AppDelegate(A.NSObject):
                              'classic':'Classic motion restored',
                              'fluid':'Fluid pointer · gentle aiming, pinch to click, fist to rest'}[scheme]
             if scheme=='fluid':
-                self.rt.desktop_swipes=False
+                self.rt.desktop_swipes=self.rt.core.profile.shortcuts and not self.rt.core.paused
 
     def aim_(self, sender):
         self.demo_(None)
@@ -526,6 +606,7 @@ class AppDelegate(A.NSObject):
             return
         kind=event['kind']
         if self.rt.attempt.task=='shortcuts':return
+        if kind=='click':self.click_audio.play()
         if self.rt.attempt.task=='pointer':
             p=self.aimPoint(event['x'],event['y'])
             if kind=='move':
@@ -703,6 +784,9 @@ class AppDelegate(A.NSObject):
                 if status != 0:
                     self.camera_pending = False
                     self.camera_(None)
+            if PERMISSIONS and self.wake_pending:
+                status=PERMISSIONS.control_microphone_status()
+                if status!=0:self.wake_pending=False;self.wake_(None)
             if PERMISSIONS and self.voice_pending:
                 status = PERMISSIONS.control_microphone_status()
                 if status != 0:
@@ -725,6 +809,7 @@ class AppDelegate(A.NSObject):
                 elif kind=='quit': self.quit_(None)
                 elif kind=='practice': self.practiceEvent(value)
                 elif kind=='practice_shortcut':self.practiceShortcut(value)
+                elif kind=='position_feedback':self.rt.message=value;self.rt.core.status=value
             if self.demo_active:
                 elapsed=time.monotonic()-self.rt.attempt.started
                 if not self.demo.isVisible():
@@ -767,7 +852,7 @@ class AppDelegate(A.NSObject):
                 self.cam_button.setTitle_('Start camera' if self.rt.capture_stop.is_set() else 'Stop camera')
                 listening = self.rt.voice_until > time.monotonic()
                 self.voice_button.setTitle_('Stop listening' if listening else 'Voice · 12 sec')
-                self.voice_label.setStringValue_(self.rt.voice_message)
+                self.voice_label.setStringValue_(('MIC ON · ' if self.rt.voice_wake else '')+self.rt.voice_message)
                 mode = self.rt.core.mode
                 self.modes.setSelectedSegment_(('pointer','move','resize','scroll').index(mode))
                 self.gesture.selectItemAtIndex_({'pinch':0,'side':1,'grab':2}[self.rt.core.profile.gesture])
@@ -776,6 +861,8 @@ class AppDelegate(A.NSObject):
                     status = 'PREVIEW ONLY · ' + status
                 self.status.setStringValue_(status)
                 m = dict(self.rt.metrics)
+                if hasattr(self,'room_window') and self.room_window.isVisible():
+                    self.room_view.snapshot=self.rt.room.snapshot();self.room_view.setNeedsDisplay_(True)
                 names=' + '.join(name for i,name in enumerate(('index','middle','ring','pinky')) if m.get('finger_mask',0)&(1<<i)) or 'no clear fingers'
                 hint='Paused · Start control' if self.rt.core.paused else ('Mouse in use · resuming shortly' if self.rt.takeover_until else self.rt.shortcuts.hint())
                 if not self.rt.core.paused and not self.rt.takeover_until and self.rt.last_shortcut and time.time()-self.rt.last_shortcut['time']<1.3:
@@ -786,8 +873,8 @@ class AppDelegate(A.NSObject):
                 self.finger_label.setStringValue_('Seeing: '+names+' · '+hint)
                 self.finger_label.setHidden_(self.rt.capture_stop.is_set())
                 access = 'Accessibility ready' if trusted() else 'Accessibility required for desktop control'
-                swipe=(' · '+self.rt.core.figure.replace('_',' ') if active else '')+(' · Swipes ON' if self.rt.desktop_swipes else '')
-                self.metrics.setStringValue_(f"{m['fps']} tracking fps · palm {m['palm_px']}px · frame age {m['age_ms']}ms · {access}{swipe}")
+                swipe=(' · '+self.rt.core.figure.replace('_',' ') if active else '')+(' · Swipes ON' if self.rt.desktop_swipes else '')+(' · '+self.rt.room.active if self.rt.room.active else '')
+                self.metrics.setStringValue_(f"{m['fps']} fps · palm {m['palm_px']}px · {m.get('geometry','none')} 3D · {m['age_ms']}ms · {access}{swipe}")
                 if time.monotonic()>=self.next_status:
                     self.next_status=time.monotonic()+.5
                     report=dict(time=time.time(),version=VERSION,camera_on=not self.rt.capture_stop.is_set(),
@@ -797,7 +884,8 @@ class AppDelegate(A.NSObject):
                                 motion_scheme=self.rt.core.profile.motion_scheme,clicks=dict(self.rt.output.click_stats))
                     report.update(finger_shortcuts=self.rt.core.profile.shortcuts,last_shortcut=self.rt.last_shortcut,
                                   mouse_handoff=bool(self.rt.takeover_until),last_takeover_source=self.rt.last_takeover_source,
-                                  shortcut_hint=self.rt.shortcuts.hint())
+                                  shortcut_hint=self.rt.shortcuts.hint(),shortcut_progress=self.rt.shortcuts.progress,
+                                  room=self.rt.room.snapshot(),click_audio=self.click_audio.enabled,voice_wake=self.rt.voice_wake)
                     temp=DATA/'status.tmp'
                     temp.write_text(json.dumps(report))
                     temp.replace(DATA/'status.json')

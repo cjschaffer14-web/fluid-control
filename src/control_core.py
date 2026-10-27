@@ -55,6 +55,12 @@ class Observation:
     geometry: str = 'depth'
     finger_mask: int = 0
 
+    gesture_x: float | None = None
+    gesture_y: float | None = None
+    palm_height_fraction: float = 0.0
+    extension_scores: tuple = ()
+    hand_map: dict | None = None
+
     def usable(self):
         return (all(math.isfinite(v) for v in (self.t, self.x, self.y, self.contact, self.palm_px))
                 and -.1 <= self.x <= 1.1 and -.1 <= self.y <= 1.1
@@ -388,6 +394,8 @@ COMMANDS = {
     'go forward': 'forward', 'cancel': 'cancel',
     'desktop left': 'desktop_left', 'desktop right': 'desktop_right',
     'previous desktop': 'desktop_left', 'next desktop': 'desktop_right',
+    'calibrate here': 'position_save', 'remember this position': 'position_save',
+    'control': 'position_recall', 'come here': 'position_recall',
 }
 
 
