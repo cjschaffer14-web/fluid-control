@@ -39,9 +39,9 @@ class FingerShortcuts:
         self.reset();self.reserved=True
         return action
 
-    def feed(self,o,allowed=True,scale=1,allow_desktop=True,allow_two=True):
+    def feed(self,o,allowed=True,scale=1,allow_desktop=True,allow_two=True,allow_tap=True):
         self.reserved=False
-        if not allowed or o is None or not o.usable():
+        if not allowed or o is None or not o.pointer_usable():
             self.reset();self.previous=None
             if o is None:self.blocked=None
             return None
@@ -49,6 +49,8 @@ class FingerShortcuts:
             self.clear()
         self.previous=o
         raw=self.group_for(o.finger_mask)
+        if raw and (o.visible_fingers & o.finger_mask)!=o.finger_mask:
+            self.reset();return None
         if raw=='three' and not allow_desktop:raw=None
         if raw=='two' and not allow_two:self.reset();return None
         # A transient ring-finger estimate must not erase a two-finger stroke.
@@ -68,6 +70,7 @@ class FingerShortcuts:
         if o.t-self.last_fire<.50:
             self.reset();self.reserved=group=='two';return None
         if self.group=='two' and self.anchor and raw is None and o.finger_mask in (0,1,2):
+            if not allow_tap:self.reset();return None
             self.reserved=True
             if self.tap_at is None:self.tap_at=o.t
             if o.t-self.tap_at>.45 or math.hypot(o.x-self.anchor.x,o.y-self.anchor.y)>.045:self.reset()

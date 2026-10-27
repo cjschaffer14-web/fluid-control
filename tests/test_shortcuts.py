@@ -2,7 +2,7 @@ from pathlib import Path
 import sys,unittest
 from unittest.mock import Mock
 sys.path.insert(0,str(Path(__file__).resolve().parents[1]/'src'))
-from control_core import Observation
+from control_core import Observation,Profile
 from shortcuts import FingerShortcuts
 import runtime
 
@@ -104,5 +104,50 @@ class RuntimeGestures(unittest.TestCase):
     def test_scroll_momentum_stops_when_paused(self):
         self.r.scroll_remaining=500;self.r.pump_scroll(self.r.scroll_time+.02)
         self.assertEqual(self.r.scroll_remaining,0)
+
+    def test_fluid_chord_candidates_never_reserve_or_disarm_pointer(self):
+        self.r.core.profile=Profile(motion_scheme='fluid',shortcuts=True)
+        self.r.core.pause(False)
+        for i in range(30):
+            self.t+=1/30
+            o=Observation(self.t,.5+i*.0005,.5,.8,60,finger_mask=3)
+            self.assertFalse(self.r.process_shortcuts(o,self.t))
+            self.r.core.feed(o)
+        self.assertTrue(self.r.core.rearmed)
+        self.assertGreater(self.r.core.x,960)
+        self.assertFalse(self.r.shortcut_reserved)
+
+    def test_fluid_scroll_and_desktop_still_reach_runtime(self):
+        self.r.core.profile=Profile(motion_scheme='fluid',shortcuts=True)
+        self.r.core.paused=False;self.r.desktop_swipes=True
+        for mask,axis,kind in ((3,'y','scroll'),(7,'x','desktop')):
+            self.r.shortcuts.clear();self.r.handle_shortcut.reset_mock();self.t+=1
+            for i in range(20):
+                self.t+=1/30
+                xy=dict(x=.5,y=.5);xy[axis]+=.01*i
+                self.r.process_shortcuts(Observation(self.t,contact=.8,palm_px=60,finger_mask=mask,**xy),self.t)
+            self.assertEqual(self.r.handle_shortcut.call_count,1)
+            self.assertEqual(self.r.handle_shortcut.call_args.args[0]['kind'],kind)
+
+    def test_fluid_two_finger_curl_does_not_double_click(self):
+        self.r.core.profile=Profile(motion_scheme='fluid',shortcuts=True)
+        self.r.core.paused=False;self.sequence()
+        self.r.handle_shortcut.assert_not_called()
+
+    def test_partial_unused_pinky_does_not_block_three_finger_desktop(self):
+        s=FingerShortcuts();actions=[]
+        for i in range(20):
+            a=s.feed(Observation(100+i/30,.5+i*.01,.5,.8,60,finger_mask=7,
+                                 in_frame=False,palm_in_frame=True,visible_fingers=7))
+            if a:actions.append(a)
+        self.assertEqual(actions,[dict(kind='desktop',direction='right')])
+
+    def test_hidden_active_finger_cannot_switch_desktop(self):
+        s=FingerShortcuts();actions=[]
+        for i in range(20):
+            a=s.feed(Observation(100+i/30,.5+i*.01,.5,.8,60,finger_mask=7,
+                                 in_frame=False,palm_in_frame=True,visible_fingers=3))
+            if a:actions.append(a)
+        self.assertEqual(actions,[])
 
 if __name__=='__main__':unittest.main()

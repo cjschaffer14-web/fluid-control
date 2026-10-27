@@ -68,7 +68,7 @@ class RuntimeSafety(unittest.TestCase):
             self.r.desktop_swipes=True
             self.r.shortcut_reserved=True
             self.r.scroll_remaining=200
-            self.r.restore_pointer()
+            self.r.restore_pointer(shortcuts=False)
             self.assertFalse(self.r.core.finger_down)
             self.assertEqual(self.r.events_count.get('up'),1)
             self.assertEqual(self.r.core.profile.sensitivity,1.32)
@@ -92,7 +92,7 @@ class RuntimeSafety(unittest.TestCase):
             self.r.restore_pointer()
             saved.write_text('later profile')
             self.r.restore_pointer()
-            self.assertEqual((Path(folder)/'profile-before-0.8.1.json').read_text(),'original profile')
+            self.assertEqual((Path(folder)/'profile-before-0.8.2.json').read_text(),'original profile')
 
     def test_camera_stop_clears_stale_telemetry(self):
         self.r.metrics.update(fps=30,palm_px=100,camera_width=1920,observed_at=100,tracked=True)
@@ -101,6 +101,24 @@ class RuntimeSafety(unittest.TestCase):
         self.assertEqual(self.r.metrics['fps'],0)
         self.assertEqual(self.r.metrics['camera_width'],0)
         self.assertFalse(self.r.metrics['tracked'])
+
+    def test_fluid_restore_enables_scroll_and_desktop_shortcuts_by_default(self):
+        with TemporaryDirectory() as folder,patch.object(runtime,'DATA',Path(folder)):
+            self.r.restore_pointer()
+            self.r.pause(False)
+            self.assertTrue(self.r.core.profile.shortcuts)
+            self.assertTrue(self.r.desktop_swipes)
+            self.assertFalse(self.r.core.profile.tilt_precision)
+
+    def test_fluid_open_palm_does_not_recall_a_saved_profile(self):
+        from unittest.mock import Mock
+        self.r.core.profile.motion_scheme='fluid'
+        self.r.room.anchors=[dict(name='saved')]
+        self.r.wave.feed=Mock(return_value=True)
+        self.r.recall_position=Mock()
+        self.assertFalse(self.r.process_position(Observation(100,.5,.5,.8,60,finger_mask=15),100))
+        self.r.wave.feed.assert_not_called()
+        self.r.recall_position.assert_not_called()
 
     def test_mouse_handoff_resumes_without_manual_start(self):
         with self.r.lock:

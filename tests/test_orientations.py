@@ -58,10 +58,56 @@ class Orientations(unittest.TestCase):
 
 
 class FluidPointer(unittest.TestCase):
+    def test_partial_pinky_does_not_block_visible_palm_or_pinch(self):
+        r=result(hand());r.hand_landmarks[0][20].x=1.01
+        o=extract(r,(1080,1920,3),100,'pinch')
+        self.assertFalse(o.in_frame)
+        self.assertTrue(o.pointer_usable())
+        self.assertTrue(o.pinch_visible)
+        self.assertEqual(o.visible_fingers,7)
+
+    def test_hidden_thumb_disables_contact_but_not_palm_tracking(self):
+        r=result(hand());r.hand_landmarks[0][4].x=1.01
+        o=extract(r,(1080,1920,3),100,'pinch')
+        self.assertTrue(o.pointer_usable())
+        self.assertFalse(o.pinch_visible)
+
+    def test_visible_palm_moves_immediately_before_click_rearm(self):
+        c=Controller(profile=Profile(motion_scheme='fluid'));c.pause(False)
+        for i in range(6):c.feed(Observation(100+i/30,.5+i*.005,.5,.1,60))
+        self.assertGreater(c.x,960)
+        self.assertFalse(c.rearmed)
+        self.assertTrue(all(e['kind']=='move' for e in c.drain()))
+
+    def test_fist_classification_does_not_clutch_fluid_motion(self):
+        c=Controller(profile=Profile(motion_scheme='fluid'));c.pause(False)
+        for i in range(15):c.feed(Observation(100+i/30,.5,.5,.8,60))
+        before=c.x
+        for i in range(10):c.feed(Observation(100.5+i/30,.5+i*.005,.5,.8,60,posture='fist'))
+        self.assertGreater(c.x,before)
+
+    def test_hidden_pinch_releases_drag_and_keeps_moving_without_click(self):
+        c=Controller(profile=Profile(motion_scheme='fluid'));c.pause(False)
+        for i in range(15):c.feed(Observation(100+i/30,.5,.5,.8,60))
+        c.finger_down=True;c.state='drag';c.drain()
+        before=c.x
+        for i in range(10):
+            c.feed(Observation(100.5+i/30,.5+i*.005,.5,.1,60,in_frame=False,palm_in_frame=True,pinch_visible=False))
+        events=c.drain()
+        self.assertEqual(sum(e['kind']=='up' for e in events),1)
+        self.assertFalse(any(e['kind'] in ('click','down') for e in events))
+        self.assertGreater(c.x,before)
+
+    def test_palm_loss_still_releases_and_blocks_output(self):
+        c=Controller(profile=Profile(motion_scheme='fluid'));c.pause(False)
+        c.finger_down=True;c.state='drag'
+        c.feed(Observation(100,.6,.5,.8,60,in_frame=False,palm_in_frame=False))
+        self.assertEqual([e['kind'] for e in c.drain()],['up'])
+
     def test_fluid_scheme_survives_save(self):
         self.assertEqual(Profile.from_dict(asdict(Profile(motion_scheme='fluid'))).motion_scheme,'fluid')
 
-    def test_thumb_scroll_is_rest_in_fluid(self):
+    def test_thumb_shape_does_not_stop_fluid_pointing(self):
         c=Controller(profile=Profile(motion_scheme='fluid'));c.pause(False)
         t=100
         for i in range(15):
@@ -69,7 +115,9 @@ class FluidPointer(unittest.TestCase):
         c.drain()
         for i in range(20):
             t+=1/30;c.feed(Observation(t,.6,.5,.8,60,posture='scroll_up'))
-        self.assertFalse(any(e['kind']=='scroll' for e in c.drain()))
-        self.assertIn('Clutched',c.status)
+        events=c.drain()
+        self.assertFalse(any(e['kind']=='scroll' for e in events))
+        self.assertTrue(any(e['kind']=='move' for e in events))
+        self.assertGreater(c.x,960)
 
 if __name__=='__main__':unittest.main()

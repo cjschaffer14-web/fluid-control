@@ -1,6 +1,6 @@
 # Validation
 
-The source includes 165 automated tests covering controller transitions, calibration, smoothing, gesture geometry, shortcut state machines, desktop swipe gating, tracking regions, native event construction, local attempt handling and runtime safety behavior.
+The source includes 179 automated tests covering controller transitions, calibration, smoothing, gesture geometry, shortcut state machines, desktop swipe gating, tracking regions, native event construction, local attempt handling and runtime safety behavior.
 
 Run on macOS in the configured Python environment:
 
@@ -41,3 +41,13 @@ These checks demonstrate the repaired state transitions, not successful target s
 
 
 The local 0.8.1 update launched with the existing Accessibility/post-event permissions, camera at 30 fps, Fluid pointing active, tilt off and finger shortcuts off. The installed sources matched the recovery source files. A first owned-window check cancelled on an untagged external click after successful single/double delivery and released safely; that result was preserved locally. A second complete AppKit round trip passed left/right pairs, double click counts, drag, scroll, visible/polled press, ownership-tag propagation and non-stuck release. These are event-delivery results only. The live status also reported partial-hand edge rejection during inspection; that gate remains unchanged and may still interrupt actual use.
+
+
+## 0.8.2: fewer movement gates, controls enabled
+
+The 179-test suite passes. New cases verify immediate palm movement before click arming, continued pointing despite fist/thumb classification or an unused clipped pinky, hidden thumb/index releasing a held drag without clicking, actual palm loss blocking output, candidate finger chords not reserving/disarming Fluid pointing, scroll and desktop recognition reaching the runtime, active versus unused clipped fingers, removal of two-finger curl double click in Fluid mode, and enabled shortcut/desktop state after Fluid restore. The initial test caught a backwards delta when click arming reset an already-moving filter baseline; that reset is now confined to the older non-Fluid path.
+
+These are synthetic controller/pipeline checks. Real gesture recognition, application response, physical effort and selection accuracy remain unresolved until a user trial. The local updater backs up the previous profile, enables scroll/desktop finger controls, keeps tilt off, retains calibration and starts through the existing native host.
+
+
+Local 0.8.2 deployment: the unchanged native host launched at 30 fps; installed sources matched; camera, pointer output, finger shortcuts and desktop swipes were enabled, tilt was off, and the previous profile backup existed. The visible UI showed `Fluid`, `Tilt OFF`, `Swipes ON`, and the scroll/desktop instructions. The initial post-update snapshot had no detected hand, so no physical scroll/swipe success is inferred from launch. The native event output module did not change in this update; its 0.8.1 owned-window round trip is prior evidence, not a new camera-gesture result.

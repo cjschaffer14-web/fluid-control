@@ -126,3 +126,14 @@ Validation: 165 automated checks pass. New regression cases cover stationary-the
 
 
 Local deployment evidence: the running 0.8.1 sources matched the public recovery files and used the existing approved native host. The camera ran at 30 fps with tilt/finger shortcuts off. The first native-window test was cancelled by an untagged external left click after correct single/double events; it released safely and was preserved locally. The second test completed all click/drag/scroll/release and event-tag checks. Inspection also observed `in_frame=False` with a visible large hand, causing the unchanged whole-hand gate to reject input; the physical cause and distance were not established. This remains a concrete next live-test condition, not a resolved failure. No synthetic or owned-window result is scored as a user gesture success.
+
+
+## User-directed simplification: 0.8.2
+
+The user said fluidity had acquired too many constraints, asked to walk back requests, and reported that scrolling and desktop controls still did not work. The immediate availability failure in 0.8.1 was an implementation decision: its recovery deliberately disabled both finger shortcut recognition and desktop swipes. It should not be characterized as a newly measured recognition failure.
+
+Judgments in 0.8.2: re-enable scroll/desktop finger controls in Fluid restore, but remove candidate chord ownership of the pointer. A guessed two/three-finger pose must not cancel movement and force rearming. Separate movement from click arming, allow palm pointing with unused fingers outside the image, and remove fist/thumb posture clutching in Fluid mode. Retain palm-loss cancellation, held-button release, explicit pause, external-mouse yielding, jump rejection and visibility checks for the actual gesture fingers. Hidden pinch tips disable clicks/release a drag while the visible palm can keep moving.
+
+Walked back in the default Fluid scheme: automatic settle-to-tilt, figure-dependent speed, two-finger curl double click, and automatic waving to recall a saved room profile. Tilt is still explicit; other schemes and manual position commands retain their functions. Two ordinary pinches supply double click; two-finger flick supplies scroll; exactly three visible fingers supply desktop swipe. No threshold was relaxed simply to produce an apparent test pass. Synthetic tests caught and corrected an arming-time filter-baseline reset that produced a backwards pointer delta.
+
+179 tests pass, including recognition through the runtime and separation of a candidate chord from pointer ownership. Local diagnostics expose reasons a chord is gated. These do not establish live success, especially at 5–10 feet, on the assistant UI or in a Steam overlay. Issue #1 remains open.

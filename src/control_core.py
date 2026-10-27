@@ -63,6 +63,15 @@ class Observation:
     hand_map: dict | None = None
     palm_basis: tuple = ()
     in_frame: bool = True
+    palm_in_frame: bool | None = None
+    pinch_visible: bool = True
+    visible_fingers: int = 15
+
+    def pointer_usable(self):
+        return (all(math.isfinite(v) for v in (self.t,self.x,self.y,self.contact,self.palm_px))
+                and -.1<=self.x<=1.1 and -.1<=self.y<=1.1
+                and 0<=self.contact<=8 and self.palm_px>=22
+                and (self.in_frame if self.palm_in_frame is None else self.palm_in_frame))
 
     def usable(self):
         return (all(math.isfinite(v) for v in (self.t, self.x, self.y, self.contact, self.palm_px))
@@ -256,7 +265,8 @@ class Controller:
         if self.last_t is not None and o.t <= self.last_t:
             return
         self.last_t = o.t
-        if not o.usable():
+        free_pointer=self.profile.motion_scheme=='fluid' and self.mode=='pointer' and not self.profile.tilt_precision
+        if not (o.pointer_usable() if free_pointer else o.usable()):
             self.cancel('Hand detail uncertain · waiting for a clear view')
             return
         if self.last_obs and (o.t - self.last_obs.t > .15 or o.hand != self.last_obs.hand):
@@ -265,22 +275,29 @@ class Controller:
             self.cancel('Tracking jump · release to continue')
         frame_dt = clamp(o.t-self.last_obs.t, .008, .1) if self.last_obs else 1/30
         self.last_obs = o
+        if free_pointer and not o.pinch_visible:
+            # Hidden fingertips disable contact, not a clearly visible moving palm.
+            if self.finger_down:self.emit('up',cancelled=True)
+            self.finger_down=False;self.state='idle';self.rearmed=False
+            self.open_since=self.close_since=self.release_since=None
+            self.anchor=self.press_t=self.start_hand=None
         if not self.rearmed:
-            if o.contact > self.profile.contact_off and o.posture == 'point':
+            if o.pinch_visible and o.contact > self.profile.contact_off and (free_pointer or o.posture == 'point'):
                 if self.open_since is None:
                     self.open_since = o.t
                 if o.t - self.open_since >= .24:
                     self.rearmed = True
                     self.state = 'ready'
-                    self.previous = (o.x, o.y, o.t)
-                    self.fx(o.x, o.t)
-                    self.fy(o.y, o.t)
+                    if not free_pointer:
+                        self.previous = (o.x, o.y, o.t)
+                        self.fx(o.x, o.t)
+                        self.fy(o.y, o.t)
             else:
                 self.open_since = None
             self.status = 'Show an open hand to start'
-            return
+            if not free_pointer:return
         # Preserve a held interaction regardless of finger posture changing during pinch.
-        if self.state not in ('contact', 'drag'):
+        if self.state not in ('contact', 'drag') and not free_pointer:
             if o.posture != self.pose:
                 self.pose, self.pose_since = o.posture, o.t
             if o.posture == 'fist' or (self.profile.motion_scheme=='fluid' and o.posture in ('scroll_up','scroll_down')):
@@ -397,7 +414,8 @@ class Controller:
             self.x = clamp(self.x + dx, bx, bx+w-1)
             self.y = clamp(self.y + dy, by, by+h-1)
             self.emit('move', dragging=self.finger_down, dt=dt)
-        self.status = ('Tilt precision · pinch to click' if self.tilt.active and not self.finger_down else 'Ready · '+self.mode)
+        self.status = ('Pointing · release pinch to enable clicking' if free_pointer and not self.rearmed else
+                       ('Tilt precision · pinch to click' if self.tilt.active and not self.finger_down else 'Ready · '+self.mode))
         if self.finger_down:self.status = ('Dragging' if self.mode == 'pointer' else f'{self.mode.title()} window') if self.finger_down else f'Ready · {self.mode}'
 
 

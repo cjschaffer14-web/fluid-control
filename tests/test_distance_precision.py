@@ -148,6 +148,12 @@ class HaloStates(unittest.TestCase):
         self.assertNotIn('tilt',tracking_state(self.metrics(),10,ready=True)['label'])
         self.assertIn('tilt',tracking_state(self.metrics(),10,ready=True,tilt_enabled=True)['label'])
 
+    def test_fluid_halo_uses_palm_visibility_instead_of_unused_fingers(self):
+        m=self.metrics();m.update(in_frame=False,palm_in_frame=True)
+        self.assertEqual(tracking_state(m,10,ready=True,free_pointer=True)['color'],'green')
+        m['palm_in_frame']=False
+        self.assertEqual(tracking_state(m,10,ready=True,free_pointer=True)['color'],'amber')
+
 
 class RangeTrial(unittest.TestCase):
     def test_lost_frames_are_recorded_with_successful_frames(self):

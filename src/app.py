@@ -403,7 +403,7 @@ class AppDelegate(A.NSObject):
     def tilt_(self,sender):
         with self.rt.lock:
             enabled=not self.rt.core.profile.tilt_precision
-            self.rt.restore_pointer()
+            self.rt.restore_pointer(shortcuts=False)
             self.rt.core.profile.tilt_precision=enabled
             profile_save(self.rt.core.profile)
             self.rt.message='Tilt enabled · settle hand, then make small wrist tilts' if enabled else 'Tilt off · move hand to point'
@@ -894,7 +894,8 @@ class AppDelegate(A.NSObject):
                 self.start_button.setTitle_('Pause control' if active else 'Start control')
                 self.fluid_button.setTitle_('Fluid ●' if active and self.rt.core.profile.motion_scheme=='fluid' else 'Fluid pointer')
                 self.tilt_button.setTitle_('Tilt ON' if self.rt.core.profile.tilt_precision else 'Tilt OFF')
-                self.help.setStringValue_('2-finger tap: double click. 2-finger flick: scroll. 3 fingers: desktops. Open palm: point / tilt.' if self.rt.core.profile.shortcuts else ('Fluid: gentle aim. Pinch: click / hold to drag. Fist: rest. Esc: pause.' if self.rt.core.profile.motion_scheme=='fluid' else 'One finger: quick. Open hand: precise. Pinch: click. Fist: rest. Esc: pause.'))
+                fluid=self.rt.core.profile.motion_scheme=='fluid'
+                self.help.setStringValue_(('Pinch: click / hold to drag. Two fingers: flick to scroll. Three: swipe desktops. Esc: pause.' if self.rt.core.profile.shortcuts else 'Move hand to point. Pinch: click / hold to drag. Esc: pause.') if fluid else ('2-finger tap: double click. 2-finger flick: scroll. 3 fingers: desktops.' if self.rt.core.profile.shortcuts else 'One finger: quick. Open hand: precise. Pinch: click. Fist: rest. Esc: pause.'))
                 self.cam_button.setTitle_('Start camera' if self.rt.capture_stop.is_set() else 'Stop camera')
                 listening = self.rt.voice_until > time.monotonic()
                 self.voice_button.setTitle_('Stop listening' if listening else 'Voice · 12 sec')
@@ -910,12 +911,15 @@ class AppDelegate(A.NSObject):
                 self.halo_state=tracking_state(m,time.monotonic(),camera_on=not self.rt.capture_stop.is_set(),
                     paused=self.rt.core.paused,ready=self.rt.core.rearmed,handoff=bool(self.rt.takeover_until),
                     precision=self.rt.core.tilt.active,access=bool(trusted()) or self.rt.practice,
-                    resting=self.rt.core.status.startswith('Clutched'),tilt_enabled=self.rt.core.profile.tilt_precision)
+                    resting=self.rt.core.status.startswith('Clutched'),tilt_enabled=self.rt.core.profile.tilt_precision,
+                    free_pointer=fluid and self.rt.core.mode=='pointer' and not self.rt.core.profile.tilt_precision)
                 self.halo.update(self.halo_state,not self.rt.capture_stop.is_set())
                 if hasattr(self,'room_window') and self.room_window.isVisible():
                     self.room_view.snapshot=self.rt.room.snapshot();self.room_view.setNeedsDisplay_(True)
                 names=' + '.join(name for i,name in enumerate(('index','middle','ring','pinky')) if m.get('finger_mask',0)&(1<<i)) or 'no clear fingers'
                 hint='Paused · Start control' if self.rt.core.paused else ('Mouse in use · resuming shortly' if self.rt.takeover_until else self.rt.shortcuts.hint())
+                if active and fluid and self.rt.core.profile.shortcuts and not self.rt.takeover_until and not self.rt.shortcuts.group:
+                    hint='Two fingers: flick to scroll · three: swipe desktops'
                 if not self.rt.core.paused and not self.rt.takeover_until and self.rt.last_shortcut and time.time()-self.rt.last_shortcut['time']<1.3:
                     action=self.rt.last_shortcut
                     name=action['kind'].replace('_',' ')
@@ -938,6 +942,7 @@ class AppDelegate(A.NSObject):
                     report.update(finger_shortcuts=self.rt.core.profile.shortcuts,last_shortcut=self.rt.last_shortcut,
                                   mouse_handoff=bool(self.rt.takeover_until),last_takeover_source=self.rt.last_takeover_source,
                                   shortcut_hint=self.rt.shortcuts.hint(),shortcut_progress=self.rt.shortcuts.progress,
+                                  shortcut_diagnostics=self.rt.shortcut_diagnostics,
                                   room=self.rt.room.snapshot(),click_audio=self.click_audio.enabled,voice_wake=self.rt.voice_wake,
                                   halo=self.halo_state,tilt_precision=self.rt.core.tilt.active,
                                   tilt_enabled=self.rt.core.profile.tilt_precision,tilt_reason=self.rt.core.tilt.reason,

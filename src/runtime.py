@@ -89,7 +89,11 @@ def extract(result, shape, t, style):
                        gesture_x=float(1-tips[0]/w),gesture_y=float(tips[1]/h),
                        palm_height_fraction=float(scale/h),extension_scores=tuple(scores[1:]),
                        hand_map=mapped,palm_basis=tuple(mapped['basis']),
-                       in_frame=all(.005<v.x<.995 and .005<v.y<.995 for v in lm))
+                       in_frame=all(.005<v.x<.995 and .005<v.y<.995 for v in lm),
+                       palm_in_frame=all(.005<lm[i].x<.995 and .005<lm[i].y<.995 for i in (0,5,9,17)),
+                       pinch_visible=all(.005<lm[i].x<.995 and .005<lm[i].y<.995 for i in (4,8)),
+                       visible_fingers=sum(1<<i for i,joints in enumerate(((5,6,7,8),(9,10,11,12),(13,14,15,16),(17,18,19,20)))
+                                           if all(.005<lm[j].x<.995 and .005<lm[j].y<.995 for j in joints)))
 
 
 class Runtime:
@@ -137,6 +141,7 @@ class Runtime:
         self.scroll_remaining=0.0
         self.scroll_time=time.monotonic()
         self.last_shortcut=None
+        self.shortcut_diagnostics={}
         self.last_desktop = None
         self.takeover_until=0.0
         self.last_takeover_source=None
@@ -204,12 +209,12 @@ class Runtime:
             self.message = self.core.status
             return True
 
-    def restore_pointer(self):
+    def restore_pointer(self, shortcuts=True):
         """Restore translation pointing without discarding the user's calibration."""
         with self.lock:
             DATA.mkdir(parents=True, exist_ok=True)
             old = DATA/'profile.json'
-            backup = DATA/'profile-before-0.8.1.json'
+            backup = DATA/'profile-before-0.8.2.json'
             if old.exists() and not backup.exists():
                 # Exclusive creation preserves the first pre-recovery profile.
                 with backup.open('x') as saved:
@@ -218,10 +223,10 @@ class Runtime:
             self.core.cancel('Pointer restored · release pinch to resume')
             self._dispatch();self.output.release()
             self.core.profile.motion_scheme='fluid'
-            self.core.profile.shortcuts=False
+            self.core.profile.shortcuts=shortcuts
             self.core.profile.tilt_precision=False
             self.core.mode='pointer'
-            self.desktop_swipes=False
+            self.desktop_swipes=shortcuts and not self.core.paused
             self.swipes.reset();self.shortcuts.clear();self.wave.clear()
             self.shortcut_reserved=False
             self.scroll_remaining=0
@@ -231,7 +236,7 @@ class Runtime:
             self.output.current=(self.core.x,self.core.y)
             profile_save(self.core.profile)
             self.message='Fluid pointer restored · pinch to click; hold to drag'
-            LOG.info('Restored translation pointer; tilt and finger shortcuts disabled; calibration retained')
+            LOG.info('Restored fluid pointer; tilt off, finger shortcuts=%s; calibration retained',shortcuts)
 
     def takeover(self, source=None, now=None):
         """Yield to physical input briefly; only an explicit pause stays paused."""
@@ -400,7 +405,9 @@ class Runtime:
                                             fingers=obs.finger_mask.bit_count() if obs else 0,
                                             finger_mask=obs.finger_mask if obs else 0,
                                             hand_map=obs.hand_map if obs else None,
-                                            in_frame=obs.in_frame if obs else False,observed_at=now)
+                                            in_frame=obs.in_frame if obs else False,
+                                            palm_in_frame=obs.palm_in_frame if obs else False,
+                                            pinch_visible=obs.pinch_visible if obs else False,observed_at=now)
                         if self.attempt and not self.attempt.finished:
                             self.attempt.tracking(obs,now,self.metrics,self.core.tilt.active)
                         if obs and self.attempt and not self.attempt.finished:
@@ -687,7 +694,27 @@ class Runtime:
         action=self.shortcuts.feed(obs,allowed=allowed,scale=self.core.profile.shortcut_scale,
                                    allow_desktop=(self.desktop_swipes or self.practice) and not
                                    (self.room.anchors and obs and obs.finger_mask==15 and not self.practice),
-                                   allow_two=not self.core.paused)
+                                   allow_two=not self.core.paused,
+                                   allow_tap=self.core.profile.motion_scheme!='fluid')
+        reason=('off' if not self.core.profile.shortcuts else
+                'paused' if self.core.paused and not self.desktop_swipes else
+                'mouse handoff' if self.takeover_until else
+                'pinch held' if self.core.finger_down or self.core.state in ('contact','drag') else
+                'calibrating' if self.calibration else
+                'tracking unavailable' if obs is None or now-obs.t>.15 or not obs.pointer_usable() else
+                'active fingers hidden' if obs.finger_mask & obs.visible_fingers != obs.finger_mask else
+                'listening' if self.voice_hold else 'watching')
+        self.shortcut_diagnostics=dict(reason=reason,allowed=bool(allowed),
+            fingers=obs.finger_mask if obs else 0,group=self.shortcuts.group,
+            progress=round(self.shortcuts.progress,2),desktops=bool(self.desktop_swipes),
+            last_action=action,observed_at=now)
+        if self.core.profile.motion_scheme=='fluid' and self.core.mode=='pointer':
+            # Recognize alongside pointing. A tentative finger chord owns nothing.
+            self.shortcut_reserved=False
+            if action:
+                self.handle_shortcut(action)
+                self.core.previous=None
+            return bool(action)
         reserved=allowed and self.shortcuts.reserved and (self.shortcuts.group!='two' or
                     (self.shortcuts.anchor is not None and obs.t-self.shortcuts.anchor.t>=.10))
         if reserved and not self.shortcut_reserved:
@@ -740,7 +767,7 @@ class Runtime:
             if enabled and not self.desktop_swipes:
                 self.message='Fluid pointer · desktop gestures are off'
                 return
-            self.message='Desktop swipes on · hold 3+ fingers briefly, then sweep left or right' if enabled else 'Desktop swipes off'
+            self.message='Desktop swipes on · three fingers, sweep left or right' if enabled else 'Desktop swipes off'
 
     def save_position(self):
         with self.lock:
@@ -781,6 +808,9 @@ class Runtime:
             if message:
                 self.message=message;self.ui_actions.put(('position_feedback',message))
             return True
+        # Fluid pointing never automatically recalls another saved profile.
+        if self.core.profile.motion_scheme=='fluid':
+            self.wave.clear();return False
         # Open palm is reserved for recall only after a user has taught a position.
         if self.room.anchors and obs and obs.finger_mask==15:
             if self.wave.feed(obs):self.recall_position();return True

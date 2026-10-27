@@ -4,7 +4,7 @@
 
 An experimental macOS app that turns camera-tracked hand movement into pointer control. Built for playful, low-effort interaction and quick personal calibration.
 
-**Status: prototype, version 0.8.1.** Pointer control has been used interactively, but gesture shortcuts, distant tracking, rotated hands, and compatibility across games and popups still need live validation. This source publication does not certify those features as reliable.
+**Status: prototype, version 0.8.2.** Pointer control has been used interactively, but gesture shortcuts, distant tracking, rotated hands, and compatibility across games and popups still need live validation. This source publication does not certify those features as reliable.
 
 The native app currently appears as **Control**. Keeping that internal name and bundle identifier preserves continuity with earlier local builds; this public edition is called **Fluid Control**.
 
@@ -12,11 +12,21 @@ The native app currently appears as **Control**. Keeping that internal name and 
 
 **Not reliable yet.** The user reports inability to select a feedback answer at approximately two feet. The required operating distance is 5–10 feet, and that requirement has not been demonstrated. Track [blocking issue #1](https://github.com/cjschaffer14-web/fluid-control/issues/1). See the [failure and judgment review](docs/reviews/2026-10-27-usability.md) before interpreting tests or the tracking halo as acceptance evidence.
 
-## Recovery in 0.8.1
+## Fluid simplification in 0.8.2
+
+The 0.8.1 recovery disabled scrolling and desktop finger shortcuts. This left the requested controls unavailable. In 0.8.2 they are enabled again by **Fluid pointer**, with recognition running alongside pointing: an uncompleted finger chord no longer reserves, cancels or rearms the pointer.
+
+Fluid mode now follows a visible palm immediately, without waiting for click arming or treating a fist/thumb posture as rest. An unused fingertip at the image edge no longer stops pointing. Hidden thumb/index tips disable clicking and release an existing drag; loss of the palm still stops output and releases buttons. Show thumb/index and release the pinch to arm clicks again.
+
+To reduce competing interpretations, Fluid mode drops the two-finger double-click chord and automatic open-hand room recall. Double click uses two ordinary pinches. Two fingers are for a vertical scroll flick; exactly three visible fingers are for a horizontal desktop swipe. Briefly relax those fingers between strokes. Tilt remains an explicit opt-in. Manual position save/recall and other schemes remain available.
+
+The ring and click sound remain. Local shortcut diagnostics now distinguish disabled controls, paused control, mouse handoff, pinch held, hidden gesture fingers and tracking loss. No live trial yet establishes that these recognition changes work at 5–10 feet.
+
+## Recovery in 0.8.1 (historical)
 
 A regression in 0.8 silently enabled tilt for older profiles. Once the hand settled, tilt replaced ordinary translation and suppressed smaller movements. Fluid mode also multiplied pointer gain by apparent distance, changing an earlier usable response. The recovery removes that multiplier and makes tilt opt-in.
 
-**Fluid pointer** restores ordinary translation pointing with tilt and finger shortcuts off. It keeps your calibration and sensitivity, releases any held drag, and saves the first pre-recovery profile locally. **Tilt ON/OFF** explicitly selects the experimental rotation mode without competing finger shortcuts. Double click, scrolling and desktop chords remain separate menu opt-ins; their recognition is still unresolved. The local recovery updater starts the camera and pointer through the existing permissions.
+In 0.8.1, **Fluid pointer** restored ordinary translation pointing with tilt and finger shortcuts off. It keeps your calibration and sensitivity, releases any held drag, and saves the first pre-recovery profile locally. **Tilt ON/OFF** explicitly selects the experimental rotation mode without competing finger shortcuts. Double click, scrolling and desktop chords remain separate menu opt-ins; their recognition is still unresolved. The local recovery updater starts the camera and pointer through the existing permissions.
 
 The halo and click sound remain. Camera-off status clears stale frame-rate telemetry. Injected events carry a process-local ownership tag so source-PID-zero routes can be distinguished from untagged physical mouse events. This is defensive hardening; logs did not prove a self-triggering takeover loop.
 
@@ -50,7 +60,7 @@ Room anchors store camera-relative hand location, relative size, handedness and 
 - Camera-based pointer with adaptive smoothing, hand-size-aware tracking and a distance search pass.
 - Finger and whole-hand control schemes, plus a Fluid pointer mode.
 - Pinch click and drag, and native window movement and resizing modes.
-- Experimental two-finger curl/reopen for double click, two-finger vertical flick for scrolling, and exactly-three-finger horizontal swipe for switching desktops.
+- Experimental two-finger curl/reopen for double click in the other schemes, two-finger vertical flick for scrolling, and exactly-three-finger horizontal swipe for switching desktops.
 - Guided live demos: attempt recording, five feedback questions, and profile adjustments for the next round.
 - Optional local voice commands, a native Dock icon and a macOS permission panel.
 
